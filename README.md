@@ -1,32 +1,35 @@
 # utone-ndi-utils
 NDIを活用することでDJイベント "The Utopia Tone" の映像伝送をIPネットワーク上に移行します。  
-PythonとSDL2を使用してNDIソースを受信し、全画面表示を行ったり、OpenCVを使用してNDIソースの送信を行います。
+PythonとSDL2を使用してNDIソースを受信し全画面表示を行ったり、OpenCVを使用してNDIソースの送信を行います。
 
 ## 使い方
 動作にはPython3及びavahi-daemon、libgl1-mesa-dev、portaudio19-devが必要です。
 以下のコマンドで必要なパッケージをインストールしてください。
 ```bash
-$ sudo apt install python3 python3-pip python3-venv avahi-daemon libgl1-mesa-dev portaudio19-dev
+# Debian/Ubuntu
+$ sudo apt install git curl avahi-daemon libgl1-mesa-dev portaudio19-dev
+# Fedora
+$ sudo dnf install git curl avahi mesa-libGL-devel portaudio-devel
+$ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 次に、リポジトリをクローンし、仮想環境を作成して依存関係をインストールします。
 ```bash
 $ git clone https://github.com/TechnoTUT/utone-ndi-utils.git
 $ cd utone-ndi-utils
-$ python3 -m venv venv
-$ source venv/bin/activate
-$ pip install -r requirements.txt
+$ uv venv
+$ uv pip install -r requirements.txt
 ```
 
 NDIソースを受信して全画面表示するには、以下のコマンドを実行します。
 ```bash
-$ python3 rx_sdl2.py -s "<NDI Source Name>" --fullscreen
+$ uv run rx.py -s "<NDI Source Name>" --fullscreen
 ```
 `<NDI Source Name>`は、受信したいNDIソースの名前に置き換えてください。
 
 NDIソースを送信するには、以下のコマンドを実行します。
 ```bash
-$ python3 tx.py
+$ uv run tx.py
 ```
 
 ## 自動起動設定
