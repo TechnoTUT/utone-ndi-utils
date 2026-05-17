@@ -29,6 +29,12 @@ except ImportError:
     sys.exit(1)
 
 
+# 定数化
+MAX_CAMERA_RETRIES = 100
+QUEUE_TIMEOUT = 1.0
+AUDIO_CHUNKS_PER_FRAME = 4
+
+
 class PixFmt(enum.Enum):
     RGBA = (FourCC.RGBA, cv2.COLOR_BGR2RGBA)
     BGRA = (FourCC.BGRA, cv2.COLOR_BGR2BGRA)
@@ -82,19 +88,27 @@ class VideoSourceThread(threading.Thread):
         self.actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
 
     def run(self):
+        retry_count = 0
         while self.running:
             ret, frame = self.cap.read()
             if not ret:
+                retry_count += 1
+                if retry_count > MAX_CAMERA_RETRIES:
+                    print("Error: Camera disconnected or failed to read repeatedly.", file=sys.stderr)
+                    self.running = False
+                    break
                 time.sleep(0.01)
                 continue
             
+            retry_count = 0 # 成功時はリセット
             processed_frame = cv2.cvtColor(frame, self.pix_fmt.cv_color_code)
             
             while self.running:
                 try:
-                    self.out_queue.put(processed_frame, timeout=1.0)
+                    self.out_queue.put(processed_frame, timeout=QUEUE_TIMEOUT)
                     break
                 except queue.Full:
+                    # キューが詰まっている場合、古いフレームを捨てて最新のものに置き換える
                     try:
                         self.out_queue.get_nowait()
                     except queue.Empty:
@@ -104,32 +118,6 @@ class VideoSourceThread(threading.Thread):
         self.running = False
         self.join(timeout=2)
         self.cap.release()
-
-
-class SendThread(threading.Thread):
-    def __init__(self, sender: Sender, in_queue: queue.Queue, has_audio: bool):
-        super().__init__()
-        self.sender = sender
-        self.in_queue = in_queue
-        self.has_audio = has_audio
-        self.running = True
-        self.daemon = True
-
-    def run(self):
-        while self.running:
-            try:
-                item = self.in_queue.get(timeout=1.0)
-                if self.has_audio:
-                    video_frame, audio_frame = item
-                    self.sender.write_video_and_audio(video_frame.ravel(), audio_frame)
-                else:
-                    self.sender.write_video_async(item.ravel())
-            except queue.Empty:
-                continue
-    
-    def stop(self):
-        self.running = False
-        self.join(timeout=2)
 
 
 class VideoSendThread(threading.Thread):
@@ -143,7 +131,7 @@ class VideoSendThread(threading.Thread):
     def run(self):
         while self.running:
             try:
-                video_frame = self.in_queue.get(timeout=1.0)
+                video_frame = self.in_queue.get(timeout=QUEUE_TIMEOUT)
                 self.sender.write_video_async(video_frame.ravel())
             except queue.Empty:
                 continue
@@ -163,7 +151,7 @@ class AudioSendThread(threading.Thread):
     def run(self):
         while self.running:
             try:
-                audio_frame = self.in_queue.get(timeout=1.0)
+                audio_frame = self.in_queue.get(timeout=QUEUE_TIMEOUT)
                 self.sender.write_audio(audio_frame)
             except queue.Empty:
                 continue
@@ -210,12 +198,12 @@ def capture_and_send(opts: Options) -> None:
     audio_queue = None
 
     if not opts.no_audio:
-        audio_queue = queue.Queue(maxsize=2)
+        audio_queue = queue.Queue(maxsize=4)
         if actual_fps == 0:
             raise ValueError("Actual FPS from camera is 0, cannot calculate audio samples per frame.")
         
         samples_per_frame = round(opts.sample_rate / actual_fps)
-        samples_per_chunk = max(64, samples_per_frame // 4)
+        samples_per_chunk = max(64, samples_per_frame // AUDIO_CHUNKS_PER_FRAME)
         if samples_per_chunk == 0:
             samples_per_chunk = 1
 
@@ -225,16 +213,16 @@ def capture_and_send(opts: Options) -> None:
         af.set_max_num_samples(samples_per_frame)
         sender.set_audio_frame(af)
         
-        def audio_callback(indata, frames, time, status):
-            if status:
-                if 'input overflow' not in str(status):
-                    print(f"Audio callback status: {status}", file=sys.stderr)
+        def audio_callback(indata, frames, time_info, status):
+            if status and 'input overflow' not in str(status):
+                print(f"Audio callback status: {status}", file=sys.stderr)
             if audio_queue:
                 while True:
                     try:
-                        audio_queue.put(indata.copy().T, timeout=1.0)
+                        audio_queue.put(indata.copy().T, timeout=0.1)
                         break
                     except queue.Full:
+                        # 詰まっている場合は古い音声を捨てて同期ズレを防ぐ
                         try:
                             audio_queue.get_nowait()
                         except queue.Empty:
@@ -264,25 +252,35 @@ def capture_and_send(opts: Options) -> None:
                 while True:
                     try:
                         video_data = processed_video_queue.get(timeout=2.0)
-                        audio_chunks = [audio_queue.get(timeout=2.0) for _ in range(4)]
+                        audio_chunks = [audio_queue.get(timeout=2.0) for _ in range(AUDIO_CHUNKS_PER_FRAME)]
                         audio_data = np.concatenate(audio_chunks, axis=1)
-                        send_video_queue.put(video_data, timeout=1.0)
-                        send_audio_queue.put(audio_data, timeout=1.0)
+                        
+                        # 送信キューに空きがない場合は破棄してスキップ
+                        try:
+                            send_video_queue.put_nowait(video_data)
+                            send_audio_queue.put_nowait(audio_data)
+                        except queue.Full:
+                            print("Warning: Network send queue full. Dropping frame.", file=sys.stderr)
+                            # 送信キューを一旦空にする
+                            with send_video_queue.mutex: send_video_queue.queue.clear()
+                            with send_audio_queue.mutex: send_audio_queue.queue.clear()
+
                     except queue.Empty:
-                        print("Error: Audio or video queue was empty for 2 seconds. Stopping stream.", file=sys.stderr)
-                        break
-                    except queue.Full:
-                        print("Warning: Send queue is full. NDI sender might be blocked or slow.", file=sys.stderr)
+                        if not video_source_thread.running:
+                            break # カメラエラーでスレッドが死んだ場合
+                        print("Warning: Audio or video queue was empty.", file=sys.stderr)
             else:
                 while True:
                     try:
                         frame = processed_video_queue.get(timeout=2.0)
-                        send_video_queue.put(frame, timeout=1.0)
+                        try:
+                            send_video_queue.put_nowait(frame)
+                        except queue.Full:
+                            with send_video_queue.mutex: send_video_queue.queue.clear()
                     except queue.Empty:
-                        print("Error: Processed video queue was empty for 2 seconds. Stopping stream.", file=sys.stderr)
-                        break
-                    except queue.Full:
-                        print("Warning: Send queue is full. NDI sender might be blocked or slow.", file=sys.stderr)
+                        if not video_source_thread.running:
+                            break
+
     finally:
         print("\nStopping stream resources...")
         video_send_thread.stop()
@@ -294,7 +292,7 @@ def capture_and_send(opts: Options) -> None:
         video_source_thread.stop()
         print("Stream stopped.")
 
-
+# ... (main関数部分は変更なし) ...
 @click.command()
 @click.option('--list-devices', is_flag=True, help='List available video and audio devices and exit.')
 @click.option('--no-audio', is_flag=True, help='Disable audio and send video only.')

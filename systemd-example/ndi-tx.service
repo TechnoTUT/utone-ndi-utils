@@ -3,8 +3,8 @@ Description=NDI Sender
 After=network.target
 
 [Service]
-ExecStart=/path/to/utone-ndi-utils/start-tx.sh
-WorkingDirectory=/path/to/utone-ndi-utils
+ExecStart=%h/utone-ndi-utils/venv/bin/python %h/utone-ndi-utils/tx.py
+WorkingDirectory=%h/utone-ndi-utils
 Restart=always
 RestartSec=3
 
