@@ -4,6 +4,7 @@ from typing import NamedTuple, TYPE_CHECKING
 from typing_extensions import Self
 import enum
 import time
+import sys
 
 import click
 
@@ -41,18 +42,74 @@ class Bandwidth(enum.Enum):
 
 
 class Options(NamedTuple):
-    sender_name: str = 'ffmpeg_sender'
+    sender_name: str
     recv_fmt: RecvFmt = RecvFmt.rgb
     recv_bandwidth: Bandwidth = Bandwidth.highest
     fullscreen: bool = False
 
 
+def show_interactive_menu(finder: Finder) -> str:
+    """引数なしで起動した際に、NDIソースを検索してユーザーに選択させるCLIメニュー"""
+    click.echo("Searching for NDI sources on the network", nl=False)
+    sys.stdout.flush()
+    
+    sources = []
+    
+    try:
+        for i in range(100):
+            finder.wait_for_sources(0) 
+            
+            time.sleep(0.1) 
+            
+            sources = list(finder)
+            
+            if sources:
+                time.sleep(0.5)
+                finder.wait_for_sources(0)
+                sources = list(finder)
+                break
+            
+            if i % 10 == 0:
+                click.echo(".", nl=False)
+                sys.stdout.flush()
+                
+        click.echo() # 改行
+        
+    except KeyboardInterrupt:
+        click.echo("\nSearch cancelled by user.", err=True)
+        sys.exit(1)
+        
+    if not sources:
+        click.echo("Error: No NDI sources found. Please ensure the sender is running.", err=True)
+        sys.exit(1)
+        
+    click.echo("\n--- Available NDI Sources ---")
+    for i, src in enumerate(sources):
+        click.echo(f"  [{i + 1}] {src.name}")
+        
+    while True:
+        try:
+            choice = click.prompt("\nSelect a source by number", type=int)
+            if 1 <= choice <= len(sources):
+                selected_name = sources[choice - 1].name
+                click.echo(f"Selected: {selected_name}\n")
+                return selected_name
+            else:
+                click.echo(f"Invalid choice. Please enter a number between 1 and {len(sources)}.")
+        except KeyboardInterrupt:
+            click.echo("\nSelection cancelled by user.", err=True)
+            sys.exit(1)
+
+
 def get_source(finder: Finder, name: str) -> Source:
-    click.echo('Waiting for NDI sources...')
-    finder.wait_for_sources(10)
-    for source in finder:
-        if source.name == name or source.stream_name == name:
-            return source
+    click.echo(f'Waiting for NDI source "{name}"...')
+    for _ in range(100):
+        finder.wait_for_sources(0)
+        for source in finder:
+            if source.name == name or source.stream_name == name:
+                return source
+        time.sleep(0.1)
+    
     raise Exception(f'Source not found. Available sources: {finder.get_source_names()}')
 
 
@@ -72,13 +129,12 @@ def wait_for_first_frame(receiver: Receiver) -> None:
 def render_texture(frame: bytes, tex_w: int, tex_h: int, win_w: int, win_h: int, texture_id: int, recv_fmt: RecvFmt, is_texture_initialized: bool):
     if not frame or tex_w == 0 or tex_h == 0:
         render_waiting_message()
-        return False # 初期化されていないことを返す
+        return False
 
     gl_format = GL_BGRA if recv_fmt == RecvFmt.bgr else GL_RGBA
 
     glBindTexture(GL_TEXTURE_2D, texture_id)
     
-    # 初回または解像度変更時のみメモリを確保、それ以外は一部更新で高速化
     if not is_texture_initialized:
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex_w, tex_h, 0, gl_format, GL_UNSIGNED_BYTE, frame)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
@@ -106,7 +162,7 @@ def render_texture(frame: bytes, tex_w: int, tex_h: int, win_w: int, win_h: int,
     glTexCoord2f(0.0, 0.0); glVertex2f(-scale_x,  scale_y)
     glEnd()
     
-    return True # 初期化済みであることを返す
+    return True
 
 
 def render_waiting_message():
@@ -135,12 +191,12 @@ def init_window(title: str, width: int, height: int, fullscreen: bool):
         raise RuntimeError(f"SDL_CreateWindow Error: {sdl2.SDL_GetError()}")
 
     sdl2.SDL_GL_CreateContext(window)
-    sdl2.SDL_GL_SetSwapInterval(1)  # Enable vsync
+    sdl2.SDL_GL_SetSwapInterval(0)
     sdl2.SDL_ShowCursor(sdl2.SDL_DISABLE)
     return window
 
 
-def play_sdl(options: Options):
+def play_sdl(options: Options, finder: Finder):
     window = init_window("NDI Viewer", 1280, 720, options.fullscreen)
     
     w_ptr, h_ptr = sdl2.c_int(), sdl2.c_int()
@@ -157,7 +213,6 @@ def play_sdl(options: Options):
     
     texture_id = glGenTextures(1)
     
-    finder = None
     receiver = None
     
     running = True
@@ -171,7 +226,6 @@ def play_sdl(options: Options):
     is_texture_initialized = False
 
     try:
-        finder = Finder()
         vf = VideoFrameSync()
 
         while running:
@@ -208,7 +262,7 @@ def play_sdl(options: Options):
                         click.echo("Connected to NDI source.")
 
                     except Exception as e:
-                        click.echo(f"Error during connection attempt: {e}", err=True)
+                        click.echo(f"\nError during connection attempt: {e}", err=True)
                         receiver = None
                         reconnect_cooldown_until = time.time() + 5.0
                         is_texture_initialized = False
@@ -227,7 +281,6 @@ def play_sdl(options: Options):
                         
                         if tex_w > 0 and tex_h > 0 and vf.get_data_size() > 0:
                             last_frame_data = bytes(vf)
-                            # 解像度が変わった場合はテクスチャの再初期化を促す
                             if last_frame_w != tex_w or last_frame_h != tex_h:
                                 is_texture_initialized = False
                             last_frame_w, last_frame_h = tex_w, tex_h
@@ -247,7 +300,6 @@ def play_sdl(options: Options):
 
     finally:
         click.echo("Cleaning up resources...")
-        if finder and hasattr(finder, 'destroy'): finder.destroy()
         receiver = None
         
         glDeleteTextures(1, [texture_id])
@@ -255,22 +307,35 @@ def play_sdl(options: Options):
         sdl2.SDL_Quit()
         click.echo("Program terminated.")
 
+
 @click.command()
-@click.option('-s', '--sender-name', type=str, default='ffmpeg_sender', show_default=True, help='NDI source name to connect to')
+@click.option('-s', '--sender-name', type=str, default=None, help='NDI source name to connect to. If omitted, an interactive menu will be shown.')
 @click.option('-f', '--recv-fmt', type=click.Choice(choices=[m.name for m in RecvFmt]), default='rgb', show_default=True, help='Pixel format for receiving')
 @click.option('-b', '--recv-bandwidth', type=click.Choice(choices=[m.name for m in Bandwidth]), default='highest', show_default=True, help='Receiving bandwidth')
 @click.option('--fullscreen', is_flag=True, help='Start in fullscreen mode')
-def main(sender_name: str, recv_fmt: str, recv_bandwidth: str, fullscreen: bool):
-    options = Options(
-        sender_name=sender_name,
-        recv_fmt=RecvFmt.from_str(recv_fmt),
-        recv_bandwidth=Bandwidth.from_str(recv_bandwidth),
-        fullscreen=fullscreen,
-    )
+def main(sender_name: str | None, recv_fmt: str, recv_bandwidth: str, fullscreen: bool):
+    finder = Finder()
+    
     try:
-        play_sdl(options)
+        if not sender_name:
+            sender_name = show_interactive_menu(finder)
+
+        options = Options(
+            sender_name=sender_name,
+            recv_fmt=RecvFmt.from_str(recv_fmt),
+            recv_bandwidth=Bandwidth.from_str(recv_bandwidth),
+            fullscreen=fullscreen,
+        )
+        
+        play_sdl(options, finder)
+        
+    except KeyboardInterrupt:
+        click.echo("\nProgram terminated by user.", err=True)
     except Exception as e:
         click.echo(f"A fatal error occurred: {e}", err=True)
+    finally:
+        if hasattr(finder, 'destroy'):
+            finder.destroy()
 
 if __name__ == '__main__':
     main()
