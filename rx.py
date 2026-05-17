@@ -135,8 +135,7 @@ def init_window(title: str, width: int, height: int, fullscreen: bool):
         raise RuntimeError(f"SDL_CreateWindow Error: {sdl2.SDL_GetError()}")
 
     sdl2.SDL_GL_CreateContext(window)
-    # VSyncを有効にしてティアリング防止とCPU負荷軽減を図る
-    sdl2.SDL_GL_SetSwapInterval(1)
+    sdl2.SDL_GL_SetSwapInterval(0)
     sdl2.SDL_ShowCursor(sdl2.SDL_DISABLE)
     return window
 
@@ -245,8 +244,7 @@ def play_sdl(options: Options):
                         is_texture_initialized = False
 
             sdl2.SDL_GL_SwapWindow(window)
-            # VSyncが有効なため sleep は不要または最小限で済む
-            time.sleep(0.001)
+            # time.sleep(0.001)
 
     finally:
         click.echo("Cleaning up resources...")
