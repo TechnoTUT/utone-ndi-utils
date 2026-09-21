@@ -28,12 +28,8 @@ class NDIScanner:
     def stop(self):
         self._running = False
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
-        if hasattr(self.finder, "destroy"):
-            try:
-                self.finder.destroy()
-            except Exception:
-                pass
+            self._thread.join(timeout=0.3)
+        # Avoid calling finder.destroy() synchronously on shutdown as C thread may deadlock
 
     def _scan_loop(self):
         while self._running:

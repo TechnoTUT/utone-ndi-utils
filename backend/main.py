@@ -30,13 +30,18 @@ from backend.rx_runner import rx_runner
 from backend.tx_runner import tx_runner
 from backend.preview_manager import preview_manager
 
+is_shutting_down = False
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global is_shutting_down
+    is_shutting_down = False
     # Start background NDI finder scanner on startup
     scanner.start()
     yield
     # Cleanup on shutdown
+    is_shutting_down = True
     scanner.stop()
     preview_manager.stop_all()
     rx_runner.stop()
@@ -69,7 +74,7 @@ async def events_stream(request: Request):
     """
     async def event_generator():
         last_payload_str = ""
-        while True:
+        while not is_shutting_down:
             if await request.is_disconnected():
                 break
 
@@ -136,18 +141,17 @@ async def get_ndi_preview(
 
     async def mjpeg_generator():
         try:
-            while True:
+            while not is_shutting_down:
                 if await request.is_disconnected():
                     break
                 try:
-                    # Wait up to 1 second for a new frame
-                    jpeg_bytes = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    # Wait up to 0.5 second for a new frame
+                    jpeg_bytes = await asyncio.wait_for(queue.get(), timeout=0.5)
                     yield (
                         b"--frame\r\n"
                         b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
                     )
                 except asyncio.TimeoutError:
-                    # Keepalive or timeout check
                     continue
         finally:
             session.remove_subscriber(queue)

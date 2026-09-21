@@ -41,7 +41,7 @@ class NDIPreviewSession:
     def stop(self):
         self.running = False
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=1.0)
+            self.thread.join(timeout=0.3)
         self.thread = None
 
     def add_subscriber(self, q: asyncio.Queue, fps: int = 3, max_width: int = 360):
@@ -209,11 +209,7 @@ class NDIPreviewManager:
             for session in self.sessions.values():
                 session.stop()
             self.sessions.clear()
-        if hasattr(self.finder, "destroy"):
-            try:
-                self.finder.destroy()
-            except Exception:
-                pass
+        # Avoid calling finder.destroy() synchronously on shutdown as C thread may deadlock
         gc.collect()
 
 

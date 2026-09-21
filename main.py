@@ -24,7 +24,13 @@ def cli():
 @click.option("--reload", is_flag=True, default=False, help="Enable auto-reload for development.")
 def web_command(host: str, port: int, reload: bool):
     click.echo(f"Starting utone-ndi-utils Web API server on http://{host}:{port}")
-    uvicorn.run("backend.main:app", host=host, port=port, reload=reload)
+    uvicorn.run(
+        "backend.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+        timeout_graceful_shutdown=1,
+    )
 
 
 cli.add_command(rx_command)
