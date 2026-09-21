@@ -45,11 +45,29 @@ $ uv run main.py web --host 0.0.0.0 --port 8000
 - ブラウザ操作画面: `http://localhost:8000/`
 - APIドキュメント（Swagger UI）: `http://localhost:8000/docs`
 
+> [!TIP]
+> **SSH やリモート接続から起動する場合の環境変数**  
+> SSH 経由で起動したサーバーから実機のディスプレイに RX ウィンドウを表示する場合、ディスプレイサーバー（Wayland / X11）へのアクセス環境変数が必要です。
+>
+> 1. **セッション種別の確認方法**:
+>    ```bash
+>    $ loginctl show-session $(loginctl | grep $(whoami) | awk '{print $1}') -p Type
+>    ```
+> 2. **Wayland 環境の場合** (`Type=wayland`):
+>    ```bash
+>    $ WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/$(id -u) uv run main.py web --host 0.0.0.0 --port 8000
+>    ```
+> 3. **X11 環境の場合** (`Type=x11`):
+>    ```bash
+>    $ DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority uv run main.py web --host 0.0.0.0 --port 8000
+>    ```
+
 ### 2. NDIソースの受信・全画面表示 (RX)
 ```bash
 $ uv run main.py rx -s "<NDI Source Name>" --fullscreen
 ```
 `<NDI Source Name>`を省略した場合は、ネットワーク上のNDIソースを自動検索し、対話式メニューから選択して起動できます。
+*(※SSH 経由で直接 `rx` を起動する場合も、上記と同様に `WAYLAND_DISPLAY` または `DISPLAY` 環境変数が必要です)*
 
 ### 3. NDIソースの送信 (TX)
 ```bash
