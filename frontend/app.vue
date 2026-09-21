@@ -273,8 +273,7 @@ onUnmounted(() => {
           <div class="h-8 w-px bg-slate-200 dark:bg-slate-800"></div>
           <div>
             <h1 class="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <span>The Utopia Tone ndi-utils</span>
-              <span class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">v1.0</span>
+              <span>The Utopia Tone</span>
             </h1>
             <p class="text-[11px] text-slate-500 dark:text-slate-400">MoIP Toolkit</p>
           </div>
