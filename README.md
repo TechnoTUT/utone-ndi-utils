@@ -28,10 +28,21 @@ $ uv pip install -r requirements.txt
 統合CLI `main.py` から `rx` / `tx` / `web` の各機能を統一的に実行できます。
 
 ### 1. Web API / ブラウザUI
-ブラウザや外部REST API経由でNDIソースの探索、受信（RX）の開始・ソース切り替え、送信（TX）の開始・停止などを遠隔操作できます。
+フロントエンドをビルドすることで、ブラウザからNDIソース探索、受信（RX）切り替え、送信（TX）開始・停止を直感的に操作できます。
+
+#### UIのビルド
+```bash
+$ cd frontend
+$ npm install
+$ npm run build
+$ cd ..
+```
+
+#### サーバー起動
 ```bash
 $ uv run main.py web --host 0.0.0.0 --port 8000
 ```
+- ブラウザ操作画面: `http://localhost:8000/`
 - APIドキュメント（Swagger UI）: `http://localhost:8000/docs`
 
 ### 2. NDIソースの受信・全画面表示 (RX)
