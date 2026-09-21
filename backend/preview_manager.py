@@ -1,15 +1,15 @@
 """
 backend.preview_manager
 On-demand NDI video preview streamer using MJPEG (multipart/x-mixed-replace).
-Captures frames using cyndilib with low bandwidth and encodes them to JPEG with cv2.
-Supports different frame rate targets:
-- thumbnail: ~2-3 fps, width ~360px (very low CPU/network usage for multi-view grid)
-- full: ~20 fps, width ~720px (smooth for enlarged modal)
+Optimized memory management:
+- Uses memoryview / buffer interface instead of duplicating bytes on heap
+- Periodic garbage collection and idle session reclamation
 """
 from __future__ import annotations
 import asyncio
 import time
 import threading
+import gc
 from typing import Dict, Optional, Set, Tuple
 import numpy as np
 import cv2
@@ -57,8 +57,8 @@ class NDIPreviewSession:
         vf = VideoFrameSync()
         reconnect_time = 0.0
 
-        # Cache encoded frames for identical resolutions to avoid duplicate encoding
         last_sub_send_time: Dict[asyncio.Queue, float] = {}
+        last_gc_time = time.time()
 
         while self.running:
             with self.lock:
@@ -69,6 +69,12 @@ class NDIPreviewSession:
                 continue
 
             now = time.time()
+
+            # Periodic GC every 15 seconds to return freed C/Python memory chunks
+            if now - last_gc_time > 15.0:
+                last_gc_time = now
+                gc.collect()
+
             if receiver is None or not receiver.is_connected():
                 if now >= reconnect_time:
                     try:
@@ -94,7 +100,7 @@ class NDIPreviewSession:
                 time.sleep(0.1)
                 continue
 
-            # Determine who actually needs a frame right now based on their target FPS
+            # Check which subscribers need a frame
             active_targets = []
             for q, (fps, max_w) in subs.items():
                 min_interval = 1.0 / max(1, fps)
@@ -110,9 +116,17 @@ class NDIPreviewSession:
             try:
                 receiver.frame_sync.capture_video()
                 w, h = vf.get_resolution()
-                if w > 0 and h > 0 and vf.get_data_size() > 0:
-                    raw_data = bytes(vf)
-                    arr = np.frombuffer(raw_data, dtype=np.uint8).reshape((h, w, 4))
+                data_size = vf.get_data_size()
+                if w > 0 and h > 0 and data_size > 0:
+                    # Use memoryview over vf to avoid copying into an intermediate Python bytes object
+                    # VideoFrameSync implements Python buffer protocol (or memoryview can wrap it)
+                    try:
+                        mv = memoryview(vf)
+                    except TypeError:
+                        mv = memoryview(bytes(vf))
+
+                    # Reshape buffer directly
+                    arr = np.frombuffer(mv, dtype=np.uint8, count=w * h * 4).reshape((h, w, 4))
 
                     # Group subscribers by max_width to encode only once per resolution
                     width_groups: Dict[int, list] = {}
@@ -127,6 +141,7 @@ class NDIPreviewSession:
                         else:
                             resized = arr
 
+                        # In-place color conversion / encoding
                         bgr = cv2.cvtColor(resized, cv2.COLOR_BGRA2BGR)
                         quality = 65 if max_w <= 360 else 75
                         success, enc = cv2.imencode('.jpg', bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
@@ -153,11 +168,11 @@ class NDIPreviewSession:
                 if q not in subs:
                     last_sub_send_time.pop(q, None)
 
-            # Sleep briefly to not spin
             time.sleep(0.02)
 
         if receiver is not None:
             receiver = None
+        gc.collect()
 
 
 class NDIPreviewManager:
@@ -186,6 +201,8 @@ class NDIPreviewManager:
             for name in to_remove:
                 self.sessions[name].stop()
                 del self.sessions[name]
+        if to_remove:
+            gc.collect()
 
     def stop_all(self):
         with self.lock:
@@ -197,6 +214,7 @@ class NDIPreviewManager:
                 self.finder.destroy()
             except Exception:
                 pass
+        gc.collect()
 
 
 preview_manager = NDIPreviewManager()
