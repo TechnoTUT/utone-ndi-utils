@@ -17,18 +17,21 @@ class NDIScanner:
         self._sources: Dict[str, NDISourceItem] = {}
         self._running = False
         self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
 
     def start(self):
         if self._running:
             return
         self._running = True
+        self._stop_event.clear()
         self._thread = threading.Thread(target=self._scan_loop, daemon=True)
         self._thread.start()
 
     def stop(self):
         self._running = False
+        self._stop_event.set()
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=0.3)
+            self._thread.join(timeout=0.1)
         # Avoid calling finder.destroy() synchronously on shutdown as C thread may deadlock
 
     def _scan_loop(self):
@@ -53,7 +56,8 @@ class NDIScanner:
             except Exception as e:
                 # Keep loop alive even if cyndilib raises
                 pass
-            time.sleep(0.5)
+            if self._stop_event.wait(0.5):
+                break
 
     def get_sources(self) -> List[NDISourceItem]:
         with self._lock:

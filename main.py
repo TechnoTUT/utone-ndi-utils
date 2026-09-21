@@ -23,14 +23,33 @@ def cli():
 @click.option("-p", "--port", default=8000, show_default=True, help="Port to bind Web server.")
 @click.option("--reload", is_flag=True, default=False, help="Enable auto-reload for development.")
 def web_command(host: str, port: int, reload: bool):
+    import signal
+    import sys
+
     click.echo(f"Starting utone-ndi-utils Web API server on http://{host}:{port}")
-    uvicorn.run(
+
+    config = uvicorn.Config(
         "backend.main:app",
         host=host,
         port=port,
         reload=reload,
         timeout_graceful_shutdown=0,
     )
+    server = uvicorn.Server(config)
+
+    def handle_exit(sig, frame):
+        server.should_exit = True
+        server.force_exit = True
+
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
+
+    try:
+        server.run()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        sys.exit(0)
 
 
 cli.add_command(rx_command)
