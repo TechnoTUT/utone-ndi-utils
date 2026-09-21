@@ -339,9 +339,9 @@ onUnmounted(() => {
           <div class="h-8 w-px bg-slate-200 dark:bg-slate-800"></div>
           <div>
             <h1 class="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <span>The Utopia Tone</span>
+              <span>MoIP Toolkit</span>
             </h1>
-            <p class="text-[11px] text-slate-500 dark:text-slate-400">MoIP Toolkit</p>
+            <p class="text-[11px] text-slate-500 dark:text-slate-400">The Utopia Tone Streaming Network</p>
           </div>
         </a>
       </div>
