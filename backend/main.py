@@ -7,7 +7,10 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from typing import List
-from fastapi import FastAPI, HTTPException
+import json
+import asyncio
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -53,6 +56,50 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --- Server-Sent Events (SSE) Stream ---
+@app.get("/api/events", tags=["SSE"])
+async def events_stream(request: Request):
+    """
+    Server-Sent Events endpoint pushing NDI sources and RX/TX statuses.
+    Sends full state periodically (or immediately on change) without frontend polling.
+    """
+    async def event_generator():
+        last_payload_str = ""
+        while True:
+            if await request.is_disconnected():
+                break
+
+            sources = [s.model_dump() for s in scanner.get_sources()]
+            rx_stat = rx_runner.get_status().model_dump()
+            tx_stat = tx_runner.get_status().model_dump()
+
+            current_payload = {
+                "sources": sources,
+                "rx": rx_stat,
+                "tx": tx_stat,
+            }
+            payload_str = json.dumps(current_payload, sort_keys=True)
+
+            # Send update immediately if changed, or heartbeat ping periodically
+            if payload_str != last_payload_str:
+                last_payload_str = payload_str
+                yield f"event: state\ndata: {payload_str}\n\n"
+            else:
+                yield ": keepalive\n\n"
+
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # --- NDI Discovery Endpoints ---

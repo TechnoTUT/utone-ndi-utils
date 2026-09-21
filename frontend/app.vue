@@ -243,20 +243,47 @@ async function stopTx() {
   }
 }
 
-let pollTimer: any = null
+let eventSource: EventSource | null = null
+
+function setupSSE() {
+  if (eventSource) {
+    eventSource.close()
+  }
+
+  eventSource = new EventSource(`${API_BASE}/api/events`)
+
+  eventSource.addEventListener('state', (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (data.sources) {
+        ndiSources.value = data.sources
+      }
+      if (data.rx) {
+        rxStatus.value = data.rx
+      }
+      if (data.tx) {
+        txStatus.value = data.tx
+      }
+    } catch (e) {
+      console.error('Failed to parse SSE state message', e)
+    }
+  })
+
+  eventSource.onerror = (e) => {
+    console.warn('SSE connection lost or error, will automatically retry...', e)
+  }
+}
 
 onMounted(() => {
-  fetchSources()
   fetchDevices()
-  fetchStatus()
-  pollTimer = setInterval(() => {
-    fetchSources()
-    fetchStatus()
-  }, 1000)
+  setupSSE()
 })
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
+  }
 })
 </script>
 

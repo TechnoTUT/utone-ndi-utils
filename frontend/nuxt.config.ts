@@ -26,7 +26,7 @@ export default defineNuxtConfig({
   },
   app: {
     head: {
-      title: 'utone NDI Control',
+      title: 'MoIP Control',
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' }
