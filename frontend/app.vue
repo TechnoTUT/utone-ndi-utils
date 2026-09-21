@@ -105,6 +105,22 @@ const txPixFmt = ref('BGRX')
 const rxLoading = ref(false)
 const txLoading = ref(false)
 
+// Web Preview State
+const previewSource = ref<string | null>(null)
+const previewKey = ref(0)
+const isPreviewModalOpen = ref(false)
+
+function openPreview(sourceName: string) {
+  previewSource.value = sourceName
+  previewKey.value = Date.now()
+  isPreviewModalOpen.value = true
+}
+
+function closePreview() {
+  isPreviewModalOpen.value = false
+  previewSource.value = null
+}
+
 // API Base
 const API_BASE = ''
 
@@ -481,33 +497,69 @@ onUnmounted(() => {
                   <span v-if="rxStatus.current_source === source.name && rxStatus.running" class="px-2 py-0.5 bg-[#C7000A] text-white text-[11px] rounded-full font-bold">Active</span>
                 </div>
                 <h3 class="text-base font-bold text-slate-900 dark:text-slate-100 break-all">{{ source.name }}</h3>
-                <p v-if="source.stream_name" class="text-xs text-slate-500 dark:text-slate-400 mt-1">Stream: {{ source.stream_name }}</p>
+                <p v-if="source.stream_name" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Stream: {{ source.stream_name }}</p>
+
+                <!-- Live Thumbnail Multi-view (2-3fps, low res) -->
+                <div
+                  @click="openPreview(source.name)"
+                  class="mt-3 relative aspect-video bg-black/90 rounded-xl overflow-hidden cursor-pointer group border border-slate-200 dark:border-slate-800 flex items-center justify-center select-none"
+                  title="Click to enlarge"
+                >
+                  <img
+                    :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=2&width=360`"
+                    :alt="source.name"
+                    class="w-full h-full object-contain pointer-events-none"
+                    loading="lazy"
+                  />
+                  <!-- Hover overlay indicating click to enlarge -->
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-semibold">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                    </svg>
+                    <span>Click to Enlarge</span>
+                  </div>
+                  <!-- FPS badge -->
+                  <span class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-[10px] text-white/80 font-mono">
+                    2fps
+                  </span>
+                </div>
               </div>
 
               <div>
-                <button
-                  v-if="rxStatus.running && rxStatus.current_source === source.name"
-                  disabled
-                  class="w-full py-2.5 px-3 bg-[#C7000A]/10 text-[#C7000A] border border-[#C7000A]/30 rounded-xl text-sm font-semibold"
-                >
-                  Currently Displaying
-                </button>
-                <button
-                  v-else-if="rxStatus.running"
-                  @click="switchRx(source.name)"
-                  :disabled="rxLoading"
-                  class="w-full py-2.5 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-xl text-sm font-semibold transition"
-                >
-                  Switch to this Source
-                </button>
-                <button
-                  v-else
-                  @click="startRx(source.name)"
-                  :disabled="rxLoading"
-                  class="w-full py-2.5 px-3 bg-[#C7000A] hover:bg-[#b00009] text-white rounded-xl text-sm font-semibold transition shadow-md shadow-[#C7000A]/20"
-                >
-                  Open Viewer
-                </button>
+                <div class="grid grid-cols-2 gap-2 mb-2">
+                  <button
+                    @click="openPreview(source.name)"
+                    class="py-2 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+                  >
+                    <svg class="w-4 h-4 text-[#C7000A]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <span>Web Preview</span>
+                  </button>
+                  <button
+                    v-if="rxStatus.running && rxStatus.current_source === source.name"
+                    disabled
+                    class="py-2 px-3 bg-[#C7000A]/10 text-[#C7000A] border border-[#C7000A]/30 rounded-xl text-xs font-semibold"
+                  >
+                    Displaying
+                  </button>
+                  <button
+                    v-else-if="rxStatus.running"
+                    @click="switchRx(source.name)"
+                    :disabled="rxLoading"
+                    class="py-2 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-xl text-xs font-semibold transition"
+                  >
+                    Switch Window
+                  </button>
+                  <button
+                    v-else
+                    @click="startRx(source.name)"
+                    :disabled="rxLoading"
+                    class="py-2 px-3 bg-[#C7000A] hover:bg-[#b00009] text-white rounded-xl text-xs font-semibold transition shadow-md shadow-[#C7000A]/20"
+                  >
+                    Open Window
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -694,5 +746,68 @@ onUnmounted(() => {
       </div>
 
     </main>
+
+    <!-- Web Preview Modal -->
+    <div
+      v-if="isPreviewModalOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/70 backdrop-blur-sm transition-opacity"
+    >
+      <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <!-- Modal Header -->
+        <div class="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
+          <div class="flex items-center gap-3">
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-[#C7000A] text-xs font-semibold uppercase tracking-wider">
+              <span class="w-2 h-2 rounded-full bg-[#C7000A] animate-pulse"></span>
+              <span>LIVE PREVIEW</span>
+            </div>
+            <h3 class="text-sm font-bold text-slate-900 dark:text-slate-100 truncate max-w-[300px] sm:max-w-md">
+              {{ previewSource }}
+            </h3>
+          </div>
+          <button
+            @click="closePreview"
+            class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Video Stream Container -->
+        <div class="relative bg-black flex items-center justify-center aspect-video w-full overflow-hidden select-none">
+          <img
+            v-if="previewSource"
+            :key="previewKey"
+            :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(previewSource)}&fps=20&width=720&t=${previewKey}`"
+            alt="NDI Preview"
+            class="w-full h-full object-contain pointer-events-none"
+            @error="console.warn('Preview stream error or connection closed')"
+          />
+        </div>
+
+        <!-- Modal Footer Actions -->
+        <div class="px-5 py-3.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
+          <p class="text-xs text-slate-500 dark:text-slate-400">
+            MJPEG Stream (Proxy Bandwidth). Closing this modal stops streaming to save resources.
+          </p>
+          <div class="flex items-center gap-2">
+            <button
+              v-if="previewSource && (!rxStatus.running || rxStatus.current_source !== previewSource)"
+              @click="rxStatus.running ? switchRx(previewSource) : startRx(previewSource)"
+              class="py-2 px-4 bg-[#C7000A] hover:bg-[#b00009] text-white rounded-xl text-xs font-bold transition shadow-sm"
+            >
+              {{ rxStatus.running ? 'Switch Output Window' : 'Open Output Window' }}
+            </button>
+            <button
+              @click="closePreview"
+              class="py-2 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-medium transition"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

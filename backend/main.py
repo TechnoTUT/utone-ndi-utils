@@ -28,6 +28,7 @@ from backend.ndi_scanner import scanner
 from backend.devices import list_video_devices, list_audio_devices
 from backend.rx_runner import rx_runner
 from backend.tx_runner import tx_runner
+from backend.preview_manager import preview_manager
 
 
 @asynccontextmanager
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
     yield
     # Cleanup on shutdown
     scanner.stop()
+    preview_manager.stop_all()
     rx_runner.stop()
     tx_runner.stop()
 
@@ -110,6 +112,57 @@ async def events_stream(request: Request):
 def get_ndi_sources():
     """Get list of currently detected NDI sources on the local network."""
     return scanner.get_sources()
+
+
+@app.get("/api/ndi/preview", tags=["NDI"])
+async def get_ndi_preview(
+    request: Request,
+    source: str,
+    fps: int = 3,
+    width: int = 360
+):
+    """
+    Stream live MJPEG preview for a given NDI source name.
+    fps: Target frames per second (e.g. 2-3 for thumbnail multi-view, 20 for modal).
+    width: Target width to scale to (e.g. 360 for thumbnail, 720 for modal).
+    """
+    # Clamp parameters to reasonable bounds
+    target_fps = max(1, min(fps, 30))
+    target_width = max(160, min(width, 1280))
+
+    session = preview_manager.get_or_create_session(source)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+    session.add_subscriber(queue, fps=target_fps, max_width=target_width)
+
+    async def mjpeg_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    # Wait up to 1 second for a new frame
+                    jpeg_bytes = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
+                    )
+                except asyncio.TimeoutError:
+                    # Keepalive or timeout check
+                    continue
+        finally:
+            session.remove_subscriber(queue)
+            preview_manager.cleanup_idle_sessions()
+
+    return StreamingResponse(
+        mjpeg_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # --- Device Discovery Endpoints ---
