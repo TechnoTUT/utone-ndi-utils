@@ -4,4 +4,5 @@ __pycache__/
 .output/
 .nuxt/
 dist/
+frontend/dist
 node_modules/
