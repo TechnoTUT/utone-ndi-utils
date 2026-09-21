@@ -71,7 +71,10 @@ async def events_stream(request: Request):
             if await request.is_disconnected():
                 break
 
-            sources = [s.model_dump() for s in scanner.get_sources()]
+            sources = sorted(
+                [s.model_dump() for s in scanner.get_sources()],
+                key=lambda x: x["name"]
+            )
             rx_stat = rx_runner.get_status().model_dump()
             tx_stat = tx_runner.get_status().model_dump()
 

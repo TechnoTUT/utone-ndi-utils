@@ -244,6 +244,9 @@ async function stopTx() {
 }
 
 let eventSource: EventSource | null = null
+let lastSourcesJson = ''
+let lastRxJson = ''
+let lastTxJson = ''
 
 function setupSSE() {
   if (eventSource) {
@@ -256,13 +259,25 @@ function setupSSE() {
     try {
       const data = JSON.parse(event.data)
       if (data.sources) {
-        ndiSources.value = data.sources
+        const sourcesJson = JSON.stringify(data.sources)
+        if (sourcesJson !== lastSourcesJson) {
+          lastSourcesJson = sourcesJson
+          ndiSources.value = data.sources
+        }
       }
       if (data.rx) {
-        rxStatus.value = data.rx
+        const rxJson = JSON.stringify(data.rx)
+        if (rxJson !== lastRxJson) {
+          lastRxJson = rxJson
+          rxStatus.value = data.rx
+        }
       }
       if (data.tx) {
-        txStatus.value = data.tx
+        const txJson = JSON.stringify(data.tx)
+        if (txJson !== lastTxJson) {
+          lastTxJson = txJson
+          txStatus.value = data.tx
+        }
       }
     } catch (e) {
       console.error('Failed to parse SSE state message', e)
