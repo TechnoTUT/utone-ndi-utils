@@ -29,7 +29,7 @@ def web_command(host: str, port: int, reload: bool):
         host=host,
         port=port,
         reload=reload,
-        timeout_graceful_shutdown=1,
+        timeout_graceful_shutdown=0,
     )
 
 

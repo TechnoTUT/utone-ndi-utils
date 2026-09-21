@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import List
 import json
 import asyncio
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -55,6 +55,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from starlette.middleware.base import BaseHTTPMiddleware
+
 # Enable CORS for local Nuxt dev server (typically port 3000)
 app.add_middleware(
     CORSMiddleware,
@@ -63,6 +65,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class SuppressShutdownCancellationMiddleware(BaseHTTPMiddleware):
+    """
+    Suppresses asyncio.CancelledError on shutdown for persistent streaming endpoints
+    (like SSE or MJPEG) so uvicorn does not dump tracebacks when cancelled by graceful shutdown.
+    """
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        except asyncio.CancelledError:
+            # Re-raise as EmptyResponse or simply suppress if shutting down
+            if is_shutting_down:
+                return Response(status_code=204)
+            raise
+
+
+app.add_middleware(SuppressShutdownCancellationMiddleware)
 
 
 # --- Server-Sent Events (SSE) Stream ---
