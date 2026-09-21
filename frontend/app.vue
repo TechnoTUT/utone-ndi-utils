@@ -194,7 +194,11 @@ async function stopRx() {
   rxLoading.value = true
   try {
     const res = await fetch(`${API_BASE}/api/rx/stop`, { method: 'POST' })
-    if (res.ok) rxStatus.value = await res.json()
+    if (res.ok) {
+      const data = await res.json()
+      lastRxJson = JSON.stringify(data)
+      rxStatus.value = data
+    }
   } catch (e) {
     console.error('Failed to stop RX', e)
   } finally {
@@ -235,7 +239,11 @@ async function stopTx() {
   txLoading.value = true
   try {
     const res = await fetch(`${API_BASE}/api/tx/stop`, { method: 'POST' })
-    if (res.ok) txStatus.value = await res.json()
+    if (res.ok) {
+      const data = await res.json()
+      lastTxJson = JSON.stringify(data)
+      txStatus.value = data
+    }
   } catch (e) {
     console.error('Failed to stop TX', e)
   } finally {

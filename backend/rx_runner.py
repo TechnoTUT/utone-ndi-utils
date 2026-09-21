@@ -271,14 +271,28 @@ class RxRunner:
 
     def stop(self):
         if self.command_q:
-            self.command_q.put({"action": "stop"})
+            try:
+                self.command_q.put_nowait({"action": "stop"})
+            except Exception:
+                pass
+
         if self.process and self.process.is_alive():
-            self.process.join(timeout=2.0)
+            self.process.join(timeout=1.0)
             if self.process.is_alive():
                 self.process.terminate()
+                self.process.join(timeout=0.5)
+
         self.process = None
-        self._current_status.running = False
-        self._current_status.is_connected = False
+        self.command_q = None
+        self.status_q = None
+        self._current_status = RxStatus(
+            running=False,
+            is_connected=False,
+            current_source=None,
+            width=0,
+            height=0,
+            error=None
+        )
 
 
 rx_runner = RxRunner()
