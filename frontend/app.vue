@@ -499,14 +499,14 @@ onUnmounted(() => {
                 <h3 class="text-base font-bold text-slate-900 dark:text-slate-100 break-all">{{ source.name }}</h3>
                 <p v-if="source.stream_name" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Stream: {{ source.stream_name }}</p>
 
-                <!-- Live Thumbnail Multi-view (2-3fps, low res) -->
+                <!-- Live Thumbnail Multi-view (10fps, low res) -->
                 <div
                   @click="openPreview(source.name)"
                   class="mt-3 relative aspect-video bg-black/90 rounded-xl overflow-hidden cursor-pointer group border border-slate-200 dark:border-slate-800 flex items-center justify-center select-none"
                   title="Click to enlarge"
                 >
                   <img
-                    :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=2&width=360`"
+                    :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=10&width=360`"
                     :alt="source.name"
                     class="w-full h-full object-contain pointer-events-none"
                     loading="lazy"
@@ -520,7 +520,7 @@ onUnmounted(() => {
                   </div>
                   <!-- FPS badge -->
                   <span class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-[10px] text-white/80 font-mono">
-                    2fps
+                    10fps
                   </span>
                 </div>
               </div>
