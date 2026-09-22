@@ -57,6 +57,10 @@ class RxStatus(BaseModel):
     fps: float = 0.0
     fps_real: float = 0.0
     dropped_frames: int = 0
+    audio_level_l: float = -60.0
+    audio_level_r: float = -60.0
+    audio_peak_l: float = -60.0
+    audio_peak_r: float = -60.0
     error: Optional[str] = None
 
 

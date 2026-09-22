@@ -86,6 +86,11 @@ const rxStatus = ref<RxStatus>({
   width: 0,
   height: 0,
   fps: 0,
+  fps_real: 0,
+  audio_level_l: -60,
+  audio_level_r: -60,
+  audio_peak_l: -60,
+  audio_peak_r: -60,
   error: null
 })
 
@@ -407,18 +412,18 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <!-- System Stats Badges -->
-        <div class="hidden md:flex items-center gap-2 bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-mono">
+        <!-- System Stats Badges (Fixed width & tabular numbers to prevent layout jitter) -->
+        <div class="hidden md:flex items-center gap-2 bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-mono select-none">
           <div class="flex items-center gap-1.5">
             <span class="text-slate-400 font-sans font-semibold text-[10px] uppercase">CPU</span>
             <span
+              class="w-[42px] text-right font-bold tabular-nums"
               :class="[
-                'font-bold',
                 systemStatus.cpu_percent > 85 ? 'text-rose-500 animate-pulse' :
                 systemStatus.cpu_percent > 60 ? 'text-amber-500' : 'text-emerald-500'
               ]"
             >
-              {{ systemStatus.cpu_percent }}%
+              {{ systemStatus.cpu_percent.toFixed(1) }}%
             </span>
           </div>
 
@@ -427,13 +432,13 @@ onUnmounted(() => {
           <div class="flex items-center gap-1.5">
             <span class="text-slate-400 font-sans font-semibold text-[10px] uppercase">RAM</span>
             <span
+              class="w-[42px] text-right font-bold tabular-nums"
               :class="[
-                'font-bold',
                 systemStatus.mem_percent > 85 ? 'text-rose-500' :
                 systemStatus.mem_percent > 70 ? 'text-amber-500' : 'text-slate-700 dark:text-slate-200'
               ]"
             >
-              {{ systemStatus.mem_percent }}%
+              {{ systemStatus.mem_percent.toFixed(1) }}%
             </span>
           </div>
 
@@ -441,7 +446,7 @@ onUnmounted(() => {
 
           <div class="flex items-center gap-1 text-slate-500 dark:text-slate-400">
             <span class="font-sans font-semibold text-[10px] uppercase">Load</span>
-            <span>{{ systemStatus.load_avg[0] || '0.00' }}</span>
+            <span class="w-[32px] text-right tabular-nums">{{ (systemStatus.load_avg[0] || 0).toFixed(2) }}</span>
           </div>
         </div>
 
@@ -498,6 +503,48 @@ onUnmounted(() => {
                 <span class="text-slate-900 dark:text-slate-100 font-mono font-medium">
                   {{ rxStatus.running && rxStatus.is_connected ? `${rxStatus.fps_real?.toFixed(1) || '0.0'} fps` : '-' }}
                 </span>
+              </div>
+
+              <!-- RX Audio Level Meter (VU Meter) -->
+              <div v-if="rxStatus.running && rxStatus.is_connected" class="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <div class="flex justify-between items-center text-xs">
+                  <span class="font-semibold text-slate-500 dark:text-slate-400">Audio Level (dBFS)</span>
+                  <span class="font-mono text-slate-600 dark:text-slate-300">
+                    {{ rxStatus.audio_level_l ?? -60 }} / {{ rxStatus.audio_level_r ?? -60 }} dB
+                  </span>
+                </div>
+
+                <!-- Channel L -->
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono text-slate-400 w-3">L</span>
+                    <div class="flex-1 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                      <div
+                        class="h-full transition-all duration-75 ease-out rounded-full"
+                        :class="[
+                          (rxStatus.audio_peak_l ?? -60) > -3 ? 'bg-rose-500' :
+                          (rxStatus.audio_peak_l ?? -60) > -12 ? 'bg-amber-400' : 'bg-emerald-500'
+                        ]"
+                        :style="{ width: `${Math.max(0, Math.min(100, (((rxStatus.audio_level_l ?? -60) + 60) / 60) * 100))}%` }"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- Channel R -->
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono text-slate-400 w-3">R</span>
+                    <div class="flex-1 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                      <div
+                        class="h-full transition-all duration-75 ease-out rounded-full"
+                        :class="[
+                          (rxStatus.audio_peak_r ?? -60) > -3 ? 'bg-rose-500' :
+                          (rxStatus.audio_peak_r ?? -60) > -12 ? 'bg-amber-400' : 'bg-emerald-500'
+                        ]"
+                        :style="{ width: `${Math.max(0, Math.min(100, (((rxStatus.audio_level_r ?? -60) + 60) / 60) * 100))}%` }"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 

@@ -25,8 +25,13 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     )
     from cyndilib.receiver import Receiver
     from cyndilib.video_frame import VideoFrameSync
+    try:
+        from cyndilib.audio_frame import AudioFrameSync
+    except ImportError:
+        AudioFrameSync = None
     from cyndilib.finder import Finder
     from core.rx import RecvFmt, Bandwidth, Options, render_texture, render_waiting_message, init_window
+    import numpy as np
 
     finder = Finder()
     options = Options(
@@ -57,6 +62,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     texture_id = glGenTextures(1)
     receiver: Optional[Receiver] = None
     vf = VideoFrameSync()
+    af = AudioFrameSync() if AudioFrameSync is not None else None
 
     current_source_name = options.sender_name
     running = True
@@ -69,6 +75,8 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     is_texture_initialized = False
     last_status_report = 0.0
     frames_rendered = 0
+    last_audio_levels = [-60.0, -60.0]
+    last_audio_peaks = [-60.0, -60.0]
 
     try:
         while running:
@@ -130,6 +138,11 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                                 bandwidth=options.recv_bandwidth.value,
                             )
                             receiver.frame_sync.set_video_frame(vf)
+                            if af is not None:
+                                try:
+                                    receiver.frame_sync.set_audio_frame(af)
+                                except Exception:
+                                    pass
                             receiver.set_source(matched)
                             is_connected = True
                         else:
@@ -166,6 +179,37 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                         reconnect_cooldown_until = time.time() + 2.0
                         is_texture_initialized = False
 
+                    # Audio capture & dBFS calculation
+                    if af is not None and receiver and receiver.is_connected():
+                        try:
+                            num_samples = receiver.frame_sync.capture_audio(1024)
+                            if num_samples and num_samples > 0:
+                                try:
+                                    mv = memoryview(af)
+                                except TypeError:
+                                    mv = memoryview(bytes(af))
+                                audio_arr = np.frombuffer(mv, dtype=np.float32)
+                                num_ch = af.num_channels if hasattr(af, "num_channels") and af.num_channels > 0 else 2
+                                if audio_arr.size >= num_ch:
+                                    audio_arr = audio_arr[: num_samples * num_ch].reshape((-1, num_ch))
+                                    ch_levels = []
+                                    ch_peaks = []
+                                    for ch in range(min(2, num_ch)):
+                                        ch_data = audio_arr[:, ch]
+                                        p_val = np.max(np.abs(ch_data)) if ch_data.size > 0 else 0.0
+                                        r_val = np.sqrt(np.mean(np.square(ch_data))) if ch_data.size > 0 else 0.0
+                                        p_db = 20.0 * np.log10(max(1e-4, float(p_val)))
+                                        r_db = 20.0 * np.log10(max(1e-4, float(r_val)))
+                                        ch_peaks.append(round(float(max(-60.0, min(0.0, p_db))), 1))
+                                        ch_levels.append(round(float(max(-60.0, min(0.0, r_db))), 1))
+                                    if len(ch_levels) == 1:
+                                        ch_levels.append(ch_levels[0])
+                                        ch_peaks.append(ch_peaks[0])
+                                    last_audio_levels = ch_levels[:2]
+                                    last_audio_peaks = ch_peaks[:2]
+                        except Exception:
+                            pass
+
             sdl2.SDL_GL_SwapWindow(window)
 
             # Report status every 0.5 sec
@@ -183,6 +227,10 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                     "width": last_frame_w,
                     "height": last_frame_h,
                     "fps_real": real_fps,
+                    "audio_level_l": last_audio_levels[0],
+                    "audio_level_r": last_audio_levels[1],
+                    "audio_peak_l": last_audio_peaks[0],
+                    "audio_peak_r": last_audio_peaks[1],
                 })
 
     except Exception as e:
@@ -192,7 +240,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
         glDeleteTextures(1, [texture_id])
         sdl2.SDL_DestroyWindow(window)
         sdl2.SDL_Quit()
-        status_q.put({"type": "status", "running": False, "is_connected": False, "current_source": None, "width": 0, "height": 0})
+        status_q.put({"type": "status", "running": False, "is_connected": False, "current_source": None, "width": 0, "height": 0, "audio_level_l": -60.0, "audio_level_r": -60.0})
 
 
 class RxRunner:
@@ -225,10 +273,15 @@ class RxRunner:
                 if msg.get("type") == "status":
                     self._current_status.running = msg.get("running", False)
                     self._current_status.is_connected = msg.get("is_connected", False)
+                    self._current_source = msg.get("current_source")
                     self._current_status.current_source = msg.get("current_source")
                     self._current_status.width = msg.get("width", 0)
                     self._current_status.height = msg.get("height", 0)
                     self._current_status.fps_real = msg.get("fps_real", 0.0)
+                    self._current_status.audio_level_l = msg.get("audio_level_l", -60.0)
+                    self._current_status.audio_level_r = msg.get("audio_level_r", -60.0)
+                    self._current_status.audio_peak_l = msg.get("audio_peak_l", -60.0)
+                    self._current_status.audio_peak_r = msg.get("audio_peak_r", -60.0)
                 elif msg.get("type") == "error":
                     self._current_status.error = msg.get("error")
             except queue.Empty:
