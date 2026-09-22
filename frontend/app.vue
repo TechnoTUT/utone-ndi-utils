@@ -36,6 +36,8 @@ interface RxStatus {
   width: number
   height: number
   fps: number
+  fps_real?: number
+  dropped_frames?: number
   error: string | null
 }
 
@@ -48,9 +50,22 @@ interface TxStatus {
   actual_width: number
   actual_height: number
   actual_fps: number
+  fps_real?: number
   sample_rate: number
   audio_channels: number
+  audio_level_l?: number
+  audio_level_r?: number
+  audio_peak_l?: number
+  audio_peak_r?: number
   error: string | null
+}
+
+interface SystemStatus {
+  cpu_percent: number
+  mem_percent: number
+  mem_used_mb: number
+  mem_total_mb: number
+  load_avg: number[]
 }
 
 // Active Tab
@@ -85,7 +100,19 @@ const txStatus = ref<TxStatus>({
   actual_fps: 0,
   sample_rate: 0,
   audio_channels: 0,
+  audio_level_l: -60,
+  audio_level_r: -60,
+  audio_peak_l: -60,
+  audio_peak_r: -60,
   error: null
+})
+
+const systemStatus = ref<SystemStatus>({
+  cpu_percent: 0,
+  mem_percent: 0,
+  mem_used_mb: 0,
+  mem_total_mb: 0,
+  load_avg: [0, 0, 0]
 })
 
 // Form Options
@@ -303,6 +330,9 @@ function setupSSE() {
           txStatus.value = data.tx
         }
       }
+      if (data.system) {
+        systemStatus.value = data.system
+      }
     } catch (e) {
       console.error('Failed to parse SSE state message', e)
     }
@@ -377,6 +407,44 @@ onUnmounted(() => {
           </button>
         </div>
 
+        <!-- System Stats Badges -->
+        <div class="hidden md:flex items-center gap-2 bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-mono">
+          <div class="flex items-center gap-1.5">
+            <span class="text-slate-400 font-sans font-semibold text-[10px] uppercase">CPU</span>
+            <span
+              :class="[
+                'font-bold',
+                systemStatus.cpu_percent > 85 ? 'text-rose-500 animate-pulse' :
+                systemStatus.cpu_percent > 60 ? 'text-amber-500' : 'text-emerald-500'
+              ]"
+            >
+              {{ systemStatus.cpu_percent }}%
+            </span>
+          </div>
+
+          <div class="w-px h-3 bg-slate-300 dark:bg-slate-700"></div>
+
+          <div class="flex items-center gap-1.5">
+            <span class="text-slate-400 font-sans font-semibold text-[10px] uppercase">RAM</span>
+            <span
+              :class="[
+                'font-bold',
+                systemStatus.mem_percent > 85 ? 'text-rose-500' :
+                systemStatus.mem_percent > 70 ? 'text-amber-500' : 'text-slate-700 dark:text-slate-200'
+              ]"
+            >
+              {{ systemStatus.mem_percent }}%
+            </span>
+          </div>
+
+          <div class="w-px h-3 bg-slate-300 dark:bg-slate-700"></div>
+
+          <div class="flex items-center gap-1 text-slate-500 dark:text-slate-400">
+            <span class="font-sans font-semibold text-[10px] uppercase">Load</span>
+            <span>{{ systemStatus.load_avg[0] || '0.00' }}</span>
+          </div>
+        </div>
+
         <!-- Theme Toggle Button -->
         <button
           @click="toggleColorMode"
@@ -424,6 +492,12 @@ onUnmounted(() => {
               <div class="flex justify-between">
                 <span class="text-slate-500 dark:text-slate-400">Resolution:</span>
                 <span class="text-slate-900 dark:text-slate-100 font-mono font-medium">{{ rxStatus.width ? `${rxStatus.width} x ${rxStatus.height}` : '-' }}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-slate-500 dark:text-slate-400">Render Rate:</span>
+                <span class="text-slate-900 dark:text-slate-100 font-mono font-medium">
+                  {{ rxStatus.running && rxStatus.is_connected ? `${rxStatus.fps_real?.toFixed(1) || '0.0'} fps` : '-' }}
+                </span>
               </div>
             </div>
 
@@ -597,10 +671,58 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="flex justify-between">
+                <span class="text-slate-500 dark:text-slate-400">Transmit Rate:</span>
+                <span class="text-slate-900 dark:text-slate-100 font-mono font-medium">
+                  {{ txStatus.running ? `${txStatus.fps_real?.toFixed(1) || '0.0'} fps` : '-' }}
+                </span>
+              </div>
+              <div class="flex justify-between">
                 <span class="text-slate-500 dark:text-slate-400">Audio:</span>
                 <span class="text-slate-800 dark:text-slate-200">
                   {{ txStatus.no_audio ? 'Disabled' : (txStatus.running ? `${txStatus.sample_rate}Hz (${txStatus.audio_channels}ch)` : '-') }}
                 </span>
+              </div>
+
+              <!-- Audio Level Meter (VU Meter) -->
+              <div v-if="txStatus.running && !txStatus.no_audio" class="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <div class="flex justify-between items-center text-xs">
+                  <span class="font-semibold text-slate-500 dark:text-slate-400">Audio Level (dBFS)</span>
+                  <span class="font-mono text-slate-600 dark:text-slate-300">
+                    {{ txStatus.audio_level_l ?? -60 }} / {{ txStatus.audio_level_r ?? -60 }} dB
+                  </span>
+                </div>
+
+                <!-- Channel L -->
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono text-slate-400 w-3">L</span>
+                    <div class="flex-1 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                      <div
+                        class="h-full transition-all duration-75 ease-out rounded-full"
+                        :class="[
+                          (txStatus.audio_peak_l ?? -60) > -3 ? 'bg-rose-500' :
+                          (txStatus.audio_peak_l ?? -60) > -12 ? 'bg-amber-400' : 'bg-emerald-500'
+                        ]"
+                        :style="{ width: `${Math.max(0, Math.min(100, (((txStatus.audio_level_l ?? -60) + 60) / 60) * 100))}%` }"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- Channel R -->
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono text-slate-400 w-3">R</span>
+                    <div class="flex-1 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex">
+                      <div
+                        class="h-full transition-all duration-75 ease-out rounded-full"
+                        :class="[
+                          (txStatus.audio_peak_r ?? -60) > -3 ? 'bg-rose-500' :
+                          (txStatus.audio_peak_r ?? -60) > -12 ? 'bg-amber-400' : 'bg-emerald-500'
+                        ]"
+                        :style="{ width: `${Math.max(0, Math.min(100, (((txStatus.audio_level_r ?? -60) + 60) / 60) * 100))}%` }"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 

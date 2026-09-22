@@ -23,12 +23,14 @@ from backend.models import (
     RxStatus,
     TxStartRequest,
     TxStatus,
+    SystemStatus,
 )
 from backend.ndi_scanner import scanner
 from backend.devices import list_video_devices, list_audio_devices
 from backend.rx_runner import rx_runner
 from backend.tx_runner import tx_runner
 from backend.preview_manager import preview_manager
+from backend.system_monitor import system_monitor
 
 is_shutting_down = False
 
@@ -104,11 +106,13 @@ async def events_stream(request: Request):
             )
             rx_stat = rx_runner.get_status().model_dump()
             tx_stat = tx_runner.get_status().model_dump()
+            sys_stat = system_monitor.get_status().model_dump()
 
             current_payload = {
                 "sources": sources,
                 "rx": rx_stat,
                 "tx": tx_stat,
+                "system": sys_stat,
             }
             payload_str = json.dumps(current_payload, sort_keys=True)
 
@@ -130,6 +134,13 @@ async def events_stream(request: Request):
             "X-Accel-Buffering": "no",
         }
     )
+
+
+# --- System Monitor Endpoints ---
+@app.get("/api/system/status", response_model=SystemStatus, tags=["System"])
+def get_system_status():
+    """Get current system CPU, memory, and load average."""
+    return system_monitor.get_status()
 
 
 # --- NDI Discovery Endpoints ---

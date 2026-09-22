@@ -33,6 +33,14 @@ class RxStartRequest(BaseModel):
     fullscreen: bool = False
 
 
+class SystemStatus(BaseModel):
+    cpu_percent: float = 0.0
+    mem_percent: float = 0.0
+    mem_used_mb: float = 0.0
+    mem_total_mb: float = 0.0
+    load_avg: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+
+
 class RxSwitchRequest(BaseModel):
     sender_name: str
 
@@ -47,6 +55,8 @@ class RxStatus(BaseModel):
     width: int = 0
     height: int = 0
     fps: float = 0.0
+    fps_real: float = 0.0
+    dropped_frames: int = 0
     error: Optional[str] = None
 
 
@@ -72,6 +82,12 @@ class TxStatus(BaseModel):
     actual_width: int = 0
     actual_height: int = 0
     actual_fps: float = 0.0
+    fps_real: float = 0.0
     sample_rate: int = 0
     audio_channels: int = 0
+    audio_level_l: float = -60.0
+    audio_level_r: float = -60.0
+    audio_peak_l: float = -60.0
+    audio_peak_r: float = -60.0
     error: Optional[str] = None
+

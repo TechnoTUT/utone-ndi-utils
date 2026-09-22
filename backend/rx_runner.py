@@ -68,6 +68,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     last_frame_w, last_frame_h = 0, 0
     is_texture_initialized = False
     last_status_report = 0.0
+    frames_rendered = 0
 
     try:
         while running:
@@ -153,6 +154,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                             if last_frame_w != tex_w or last_frame_h != tex_h:
                                 is_texture_initialized = False
                             last_frame_w, last_frame_h = tex_w, tex_h
+                            frames_rendered += 1
 
                         is_texture_initialized = render_texture(
                             last_frame_data, last_frame_w, last_frame_h, win_w, win_h,
@@ -168,7 +170,10 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
 
             # Report status every 0.5 sec
             now = time.time()
-            if now - last_status_report > 0.5:
+            elapsed = now - last_status_report
+            if elapsed >= 0.5:
+                real_fps = round(frames_rendered / elapsed, 1) if elapsed > 0 else 0.0
+                frames_rendered = 0
                 last_status_report = now
                 status_q.put({
                     "type": "status",
@@ -177,6 +182,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                     "current_source": current_source_name,
                     "width": last_frame_w,
                     "height": last_frame_h,
+                    "fps_real": real_fps,
                 })
 
     except Exception as e:
@@ -222,6 +228,7 @@ class RxRunner:
                     self._current_status.current_source = msg.get("current_source")
                     self._current_status.width = msg.get("width", 0)
                     self._current_status.height = msg.get("height", 0)
+                    self._current_status.fps_real = msg.get("fps_real", 0.0)
                 elif msg.get("type") == "error":
                     self._current_status.error = msg.get("error")
             except queue.Empty:

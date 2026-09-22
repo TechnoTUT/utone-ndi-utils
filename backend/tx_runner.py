@@ -78,6 +78,9 @@ def _tx_worker_process(command_q: mp.Queue, status_q: mp.Queue, opts_dict: dict)
         audio_stream = None
         audio_queue = None
 
+        last_audio_levels = [-60.0, -60.0]
+        last_audio_peaks = [-60.0, -60.0]
+
         if not opts.no_audio:
             audio_queue = std_queue.Queue(maxsize=4)
             if actual_fps > 0:
@@ -90,11 +93,31 @@ def _tx_worker_process(command_q: mp.Queue, status_q: mp.Queue, opts_dict: dict)
                 sender.set_audio_frame(af)
 
                 def audio_callback(indata, frames, time_info, status):
+                    nonlocal last_audio_levels, last_audio_peaks
                     if audio_queue:
                         try:
                             audio_queue.put_nowait(indata.copy().T)
                         except std_queue.Full:
                             pass
+                    try:
+                        ch_levels = []
+                        ch_peaks = []
+                        num_ch = indata.shape[1] if len(indata.shape) > 1 else 1
+                        for ch in range(num_ch):
+                            channel_samples = indata[:, ch] if len(indata.shape) > 1 else indata
+                            peak_val = np.max(np.abs(channel_samples)) if len(channel_samples) > 0 else 0.0
+                            rms_val = np.sqrt(np.mean(np.square(channel_samples))) if len(channel_samples) > 0 else 0.0
+                            peak_db = 20.0 * np.log10(max(1e-4, float(peak_val)))
+                            rms_db = 20.0 * np.log10(max(1e-4, float(rms_val)))
+                            ch_peaks.append(round(float(max(-60.0, min(0.0, peak_db))), 1))
+                            ch_levels.append(round(float(max(-60.0, min(0.0, rms_db))), 1))
+                        if len(ch_levels) == 1:
+                            ch_levels.append(ch_levels[0])
+                            ch_peaks.append(ch_peaks[0])
+                        last_audio_levels = ch_levels[:2]
+                        last_audio_peaks = ch_peaks[:2]
+                    except Exception:
+                        pass
 
                 audio_stream = sd.InputStream(
                     device=opts.audio_device,
@@ -116,6 +139,9 @@ def _tx_worker_process(command_q: mp.Queue, status_q: mp.Queue, opts_dict: dict)
         if audio_send_thread:
             audio_send_thread.start()
 
+        frames_sent = 0
+        last_stat_time = time.time()
+
         with sender:
             while True:
                 # Check for stop command
@@ -134,6 +160,7 @@ def _tx_worker_process(command_q: mp.Queue, status_q: mp.Queue, opts_dict: dict)
                     frame = processed_video_queue.get(timeout=0.5)
                     try:
                         send_video_queue.put_nowait(frame)
+                        frames_sent += 1
                     except std_queue.Full:
                         with send_video_queue.mutex:
                             send_video_queue.queue.clear()
@@ -152,6 +179,21 @@ def _tx_worker_process(command_q: mp.Queue, status_q: mp.Queue, opts_dict: dict)
                                     send_audio_queue.queue.clear()
                     except (std_queue.Empty, ValueError):
                         pass
+
+                now = time.time()
+                elapsed = now - last_stat_time
+                if elapsed >= 0.5:
+                    real_fps = round(frames_sent / elapsed, 1)
+                    frames_sent = 0
+                    last_stat_time = now
+                    status_q.put({
+                        "type": "metrics",
+                        "fps_real": real_fps,
+                        "audio_level_l": last_audio_levels[0],
+                        "audio_level_r": last_audio_levels[1],
+                        "audio_peak_l": last_audio_peaks[0],
+                        "audio_peak_r": last_audio_peaks[1],
+                    })
 
     except Exception as e:
         status_q.put({"type": "error", "error": str(e)})
@@ -201,6 +243,12 @@ class TxRunner:
                         self._current_status.actual_fps = msg.get("actual_fps", 0.0)
                         self._current_status.sample_rate = msg.get("sample_rate", 0)
                         self._current_status.audio_channels = msg.get("audio_channels", 0)
+                elif msg.get("type") == "metrics":
+                    self._current_status.fps_real = msg.get("fps_real", 0.0)
+                    self._current_status.audio_level_l = msg.get("audio_level_l", -60.0)
+                    self._current_status.audio_level_r = msg.get("audio_level_r", -60.0)
+                    self._current_status.audio_peak_l = msg.get("audio_peak_l", -60.0)
+                    self._current_status.audio_peak_r = msg.get("audio_peak_r", -60.0)
                 elif msg.get("type") == "error":
                     self._current_status.error = msg.get("error")
             except queue.Empty:
