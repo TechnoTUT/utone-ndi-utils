@@ -227,10 +227,12 @@ async def get_ndi_preview(
                 try:
                     # Wait up to 0.5 second for a new frame
                     jpeg_bytes = await asyncio.wait_for(queue.get(), timeout=0.5)
-                    yield (
+                    header = (
                         b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(jpeg_bytes)).encode("ascii") + b"\r\n\r\n"
                     )
+                    yield header + jpeg_bytes + b"\r\n"
                 except asyncio.TimeoutError:
                     continue
         finally:

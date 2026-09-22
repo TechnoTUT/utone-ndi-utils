@@ -102,14 +102,17 @@ class NDIPreviewSession:
 
             # Check which subscribers need a frame
             active_targets = []
+            max_requested_fps = 1
             for q, (fps, max_w) in subs.items():
-                min_interval = 1.0 / max(1, fps)
+                max_requested_fps = max(max_requested_fps, fps)
+                # Allow a slight leeway (0.85 of interval) so timing jitter doesn't skip frames
+                min_interval = 0.85 / max(1, fps)
                 last_t = last_sub_send_time.get(q, 0.0)
-                if now - last_t >= min_interval:
+                if (now - last_t) >= min_interval:
                     active_targets.append((q, max_w))
 
             if not active_targets:
-                time.sleep(0.02)
+                time.sleep(0.002)
                 continue
 
             # Capture frame
@@ -118,8 +121,6 @@ class NDIPreviewSession:
                 w, h = vf.get_resolution()
                 data_size = vf.get_data_size()
                 if w > 0 and h > 0 and data_size > 0:
-                    # Use memoryview over vf to avoid copying into an intermediate Python bytes object
-                    # VideoFrameSync implements Python buffer protocol (or memoryview can wrap it)
                     try:
                         mv = memoryview(vf)
                     except TypeError:
@@ -143,8 +144,12 @@ class NDIPreviewSession:
 
                         # In-place color conversion / encoding
                         bgr = cv2.cvtColor(resized, cv2.COLOR_BGRA2BGR)
-                        quality = 65 if max_w <= 360 else 75
-                        success, enc = cv2.imencode('.jpg', bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                        # Quality 70 provides fast encode and clear visuals
+                        quality = 65 if max_w <= 480 else 75
+                        success, enc = cv2.imencode('.jpg', bgr, [
+                            int(cv2.IMWRITE_JPEG_QUALITY), quality,
+                            int(cv2.IMWRITE_JPEG_OPTIMIZE), 0  # Fast encode without Huffman pass
+                        ])
                         if success:
                             jpeg_bytes = enc.tobytes()
                             for q in queues:
@@ -168,7 +173,9 @@ class NDIPreviewSession:
                 if q not in subs:
                     last_sub_send_time.pop(q, None)
 
-            time.sleep(0.02)
+            # High precision dynamic sleep matching highest subscriber fps
+            target_delay = 1.0 / max(1, max_requested_fps)
+            time.sleep(max(0.001, target_delay * 0.4))
 
         if receiver is not None:
             receiver = None
