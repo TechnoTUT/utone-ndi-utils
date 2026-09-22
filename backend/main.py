@@ -24,6 +24,7 @@ from backend.models import (
     TxStartRequest,
     TxStatus,
     SystemStatus,
+    AppSettings,
 )
 from backend.ndi_scanner import scanner
 from backend.devices import list_video_devices, list_audio_devices
@@ -31,8 +32,48 @@ from backend.rx_runner import rx_runner
 from backend.tx_runner import tx_runner
 from backend.preview_manager import preview_manager
 from backend.system_monitor import system_monitor
+from backend.settings import settings_manager
 
 is_shutting_down = False
+
+
+async def auto_start_worker():
+    """Background task on startup to auto-start RX / TX if configured."""
+    await asyncio.sleep(1.0)
+    if is_shutting_down:
+        return
+    settings = settings_manager.get_settings()
+    
+    # Auto-start TX if configured
+    if settings.tx.auto_start and not tx_runner.get_status().running:
+        try:
+            req = TxStartRequest(
+                video_device=settings.tx.video_device,
+                audio_device=settings.tx.audio_device,
+                no_audio=settings.tx.no_audio,
+                sender_name=settings.tx.sender_name,
+                x_res=settings.tx.x_res,
+                y_res=settings.tx.y_res,
+                fps=settings.tx.fps,
+                pix_fmt=settings.tx.pix_fmt
+            )
+            tx_runner.start(req)
+            print(f"[AutoStart] TX started with sender name: {settings.tx.sender_name}")
+        except Exception as e:
+            print(f"[AutoStart] Failed to auto-start TX: {e}")
+
+    # Auto-start RX if configured
+    if settings.rx.auto_start and settings.rx.sender_name and not rx_runner.get_status().running:
+        try:
+            rx_runner.start(
+                sender_name=settings.rx.sender_name,
+                recv_fmt=settings.rx.recv_fmt,
+                recv_bandwidth=settings.rx.recv_bandwidth,
+                fullscreen=settings.rx.fullscreen
+            )
+            print(f"[AutoStart] RX started with target source: {settings.rx.sender_name}")
+        except Exception as e:
+            print(f"[AutoStart] Failed to auto-start RX: {e}")
 
 
 @asynccontextmanager
@@ -41,9 +82,11 @@ async def lifespan(app: FastAPI):
     is_shutting_down = False
     # Start background NDI finder scanner on startup
     scanner.start()
+    auto_task = asyncio.create_task(auto_start_worker())
     yield
     # Cleanup on shutdown
     is_shutting_down = True
+    auto_task.cancel()
     scanner.stop()
     preview_manager.stop_all()
     rx_runner.stop()
@@ -113,6 +156,7 @@ async def events_stream(request: Request):
                 "rx": rx_stat,
                 "tx": tx_stat,
                 "system": sys_stat,
+                "settings": settings_manager.get_settings().model_dump(),
             }
             payload_str = json.dumps(current_payload, sort_keys=True)
 
@@ -230,6 +274,7 @@ def start_rx(req: RxStartRequest):
             recv_bandwidth=req.recv_bandwidth,
             fullscreen=req.fullscreen,
         )
+        settings_manager.on_rx_started(req)
         return rx_runner.get_status()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -240,6 +285,9 @@ def switch_rx(req: RxSwitchRequest):
     """Switch active NDI source without closing the viewer window."""
     try:
         rx_runner.switch_source(req.sender_name)
+        curr_settings = settings_manager.get_settings()
+        curr_settings.rx.sender_name = req.sender_name
+        settings_manager.update_settings(curr_settings)
         return rx_runner.get_status()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -264,6 +312,7 @@ def start_tx(req: TxStartRequest):
     """Start NDI TX sender."""
     try:
         tx_runner.start(req)
+        settings_manager.on_tx_started(req)
         return tx_runner.get_status()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -274,6 +323,20 @@ def stop_tx():
     """Stop NDI TX sender."""
     tx_runner.stop()
     return tx_runner.get_status()
+
+
+# --- Persistent Settings Endpoints ---
+@app.get("/api/settings", response_model=AppSettings, tags=["Settings"])
+def get_settings():
+    """Get saved preset settings and auto-start preferences."""
+    return settings_manager.get_settings()
+
+
+@app.post("/api/settings", response_model=AppSettings, tags=["Settings"])
+def update_settings(settings: AppSettings):
+    """Update preset settings and auto-start preferences."""
+    settings_manager.update_settings(settings)
+    return settings_manager.get_settings()
 
 
 # --- Serve Nuxt static build if exists ---

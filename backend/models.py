@@ -95,3 +95,28 @@ class TxStatus(BaseModel):
     audio_peak_r: float = -60.0
     error: Optional[str] = None
 
+
+class RxPresetSettings(BaseModel):
+    auto_start: bool = False
+    sender_name: Optional[str] = None
+    recv_fmt: str = "rgb"
+    recv_bandwidth: str = "highest"
+    fullscreen: bool = False
+
+
+class TxPresetSettings(BaseModel):
+    auto_start: bool = False
+    sender_name: str = "TX"
+    video_device: int = 0
+    audio_device: Optional[int] = None
+    no_audio: bool = False
+    x_res: int = 1920
+    y_res: int = 1080
+    fps: str = "30"
+    pix_fmt: str = "BGRX"
+
+
+class AppSettings(BaseModel):
+    rx: RxPresetSettings = Field(default_factory=RxPresetSettings)
+    tx: TxPresetSettings = Field(default_factory=TxPresetSettings)
+

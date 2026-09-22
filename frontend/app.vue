@@ -68,6 +68,27 @@ interface SystemStatus {
   load_avg: number[]
 }
 
+interface AppSettings {
+  rx: {
+    auto_start: boolean
+    sender_name: string | null
+    recv_fmt: string
+    recv_bandwidth: string
+    fullscreen: boolean
+  }
+  tx: {
+    auto_start: boolean
+    sender_name: string
+    video_device: number
+    audio_device: number | null
+    no_audio: boolean
+    x_res: number
+    y_res: number
+    fps: string
+    pix_fmt: string
+  }
+}
+
 // Active Tab
 const activeTab = ref<'rx' | 'tx'>('rx')
 
@@ -75,6 +96,27 @@ const activeTab = ref<'rx' | 'tx'>('rx')
 const ndiSources = ref<NDISource[]>([])
 const videoDevices = ref<VideoDevice[]>([])
 const audioDevices = ref<AudioDevice[]>([])
+
+const appSettings = ref<AppSettings>({
+  rx: {
+    auto_start: false,
+    sender_name: null,
+    recv_fmt: 'rgb',
+    recv_bandwidth: 'highest',
+    fullscreen: false
+  },
+  tx: {
+    auto_start: false,
+    sender_name: 'TX',
+    video_device: 0,
+    audio_device: null,
+    no_audio: false,
+    x_res: 1920,
+    y_res: 1080,
+    fps: '30',
+    pix_fmt: 'BGRX'
+  }
+})
 
 const rxStatus = ref<RxStatus>({
   running: false,
@@ -124,6 +166,7 @@ const systemStatus = ref<SystemStatus>({
 const rxFullscreen = ref(false)
 const rxFmt = ref('rgb')
 const rxBandwidth = ref('highest')
+const rxAutoStart = ref(false)
 
 const txSenderName = ref('TX')
 const txVideoDevice = ref(0)
@@ -132,6 +175,7 @@ const txNoAudio = ref(false)
 const txResolution = ref('1920x1080')
 const txFps = ref('30')
 const txPixFmt = ref('BGRX')
+const txAutoStart = ref(false)
 
 // Loading states
 const rxLoading = ref(false)
@@ -299,6 +343,88 @@ async function stopTx() {
   }
 }
 
+let hasPopulatedFromSettings = false
+
+async function fetchSettings() {
+  try {
+    const res = await fetch(`${API_BASE}/api/settings`)
+    if (res.ok) {
+      const data: AppSettings = await res.json()
+      appSettings.value = data
+      rxAutoStart.value = data.rx.auto_start
+      txAutoStart.value = data.tx.auto_start
+
+      if (!hasPopulatedFromSettings) {
+        hasPopulatedFromSettings = true
+        // Restore RX preset form options
+        if (data.rx.recv_fmt) rxFmt.value = data.rx.recv_fmt
+        if (data.rx.recv_bandwidth) rxBandwidth.value = data.rx.recv_bandwidth
+        if (data.rx.fullscreen !== undefined) rxFullscreen.value = data.rx.fullscreen
+
+        // Restore TX preset form options
+        if (data.tx.sender_name) txSenderName.value = data.tx.sender_name
+        if (data.tx.video_device !== undefined) txVideoDevice.value = data.tx.video_device
+        if (data.tx.audio_device !== undefined) txAudioDevice.value = data.tx.audio_device
+        if (data.tx.no_audio !== undefined) txNoAudio.value = data.tx.no_audio
+        if (data.tx.x_res && data.tx.y_res) txResolution.value = `${data.tx.x_res}x${data.tx.y_res}`
+        if (data.tx.fps) txFps.value = data.tx.fps
+        if (data.tx.pix_fmt) txPixFmt.value = data.tx.pix_fmt
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch settings', e)
+  }
+}
+
+async function toggleRxAutoStart() {
+  const updated: AppSettings = {
+    ...appSettings.value,
+    rx: {
+      ...appSettings.value.rx,
+      auto_start: rxAutoStart.value,
+      recv_fmt: rxFmt.value,
+      recv_bandwidth: rxBandwidth.value,
+      fullscreen: rxFullscreen.value
+    }
+  }
+  await saveSettings(updated)
+}
+
+async function toggleTxAutoStart() {
+  const [x, y] = txResolution.value.split('x').map(Number)
+  const updated: AppSettings = {
+    ...appSettings.value,
+    tx: {
+      ...appSettings.value.tx,
+      auto_start: txAutoStart.value,
+      sender_name: txSenderName.value,
+      video_device: txVideoDevice.value,
+      audio_device: txNoAudio.value ? null : txAudioDevice.value,
+      no_audio: txNoAudio.value,
+      x_res: x || 1920,
+      y_res: y || 1080,
+      fps: txFps.value,
+      pix_fmt: txPixFmt.value
+    }
+  }
+  await saveSettings(updated)
+}
+
+async function saveSettings(settings: AppSettings) {
+  try {
+    const res = await fetch(`${API_BASE}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings)
+    })
+    if (res.ok) {
+      appSettings.value = await res.json()
+    }
+  } catch (e) {
+    console.error('Failed to save settings', e)
+  }
+}
+
 let eventSource: EventSource | null = null
 let lastSourcesJson = ''
 let lastRxJson = ''
@@ -338,6 +464,11 @@ function setupSSE() {
       if (data.system) {
         systemStatus.value = data.system
       }
+      if (data.settings) {
+        appSettings.value = data.settings
+        rxAutoStart.value = data.settings.rx.auto_start
+        txAutoStart.value = data.settings.tx.auto_start
+      }
     } catch (e) {
       console.error('Failed to parse SSE state message', e)
     }
@@ -349,6 +480,7 @@ function setupSSE() {
 }
 
 onMounted(() => {
+  fetchSettings()
   fetchDevices()
   setupSSE()
 })
@@ -561,11 +693,30 @@ onUnmounted(() => {
 
           <!-- Launch Options -->
           <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm">
-            <h2 class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Viewer Options</h2>
+            <div class="flex items-center justify-between">
+              <h2 class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Viewer Options</h2>
+              <span v-if="rxAutoStart" class="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                Auto-Restore ON
+              </span>
+            </div>
             <div class="space-y-3">
               <label class="flex items-center justify-between cursor-pointer">
                 <span class="text-sm font-medium text-slate-700 dark:text-slate-300">Fullscreen Window</span>
                 <input type="checkbox" v-model="rxFullscreen" class="rounded bg-white dark:bg-slate-950 border-slate-300 dark:border-slate-700 text-[#C7000A] focus:ring-[#C7000A] h-4 w-4" />
+              </label>
+
+              <!-- Auto-Start on Boot / Reconnection -->
+              <label class="flex items-center justify-between cursor-pointer pt-1 border-t border-slate-100 dark:border-slate-800">
+                <div>
+                  <span class="text-sm font-medium text-slate-700 dark:text-slate-300 block">Auto-Start on Boot</span>
+                  <span class="text-xs text-slate-400 block">Resume last source when server starts</span>
+                </div>
+                <input
+                  type="checkbox"
+                  v-model="rxAutoStart"
+                  @change="toggleRxAutoStart"
+                  class="rounded bg-white dark:bg-slate-950 border-slate-300 dark:border-slate-700 text-[#C7000A] focus:ring-[#C7000A] h-4 w-4"
+                />
               </label>
 
               <div>
@@ -788,7 +939,18 @@ onUnmounted(() => {
         <!-- Encoder Configuration (Right 2 cols) -->
         <div class="lg:col-span-2">
           <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-6 shadow-sm">
-            <h2 class="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">NDI Encoder Configuration</h2>
+            <div class="flex items-center justify-between">
+              <h2 class="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">NDI Encoder Configuration</h2>
+              <label class="flex items-center gap-2 cursor-pointer bg-slate-50 dark:bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                <input
+                  type="checkbox"
+                  v-model="txAutoStart"
+                  @change="toggleTxAutoStart"
+                  class="rounded bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-[#C7000A] focus:ring-[#C7000A] h-4 w-4"
+                />
+                <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Auto-Start on Boot</span>
+              </label>
+            </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <!-- NDI Stream Name -->

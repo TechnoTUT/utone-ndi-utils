@@ -30,7 +30,10 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     except ImportError:
         AudioFrameSync = None
     from cyndilib.finder import Finder
-    from core.rx import RecvFmt, Bandwidth, Options, render_texture, render_waiting_message, init_window
+    from core.rx import (
+        RecvFmt, Bandwidth, Options, render_texture, render_waiting_message,
+        render_ip_banner, get_local_ip, init_window
+    )
     import numpy as np
 
     finder = Finder()
@@ -60,6 +63,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     glLoadIdentity()
 
     texture_id = glGenTextures(1)
+    overlay_tex_id = glGenTextures(1)
     receiver: Optional[Receiver] = None
     vf = VideoFrameSync()
     af = AudioFrameSync() if AudioFrameSync is not None else None
@@ -77,6 +81,8 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     frames_rendered = 0
     last_audio_levels = [-60.0, -60.0]
     last_audio_peaks = [-60.0, -60.0]
+    start_time = time.time()
+    local_ip = get_local_ip()
 
     try:
         while running:
@@ -98,6 +104,8 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                             reconnect_cooldown_until = 0.0
                             is_texture_initialized = False
                             last_frame_data = None
+                            # Reset banner start time on switch so user sees new source info
+                            start_time = time.time()
                     elif action == "toggle_fullscreen":
                         flags = sdl2.SDL_GetWindowFlags(window)
                         is_fs = bool(flags & sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP)
@@ -121,9 +129,12 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                     win_w, win_h = event.window.data1, event.window.data2
                     glViewport(0, 0, win_w, win_h)
 
+            now = time.time()
+            show_banner = (now - start_time < 30.0)
+
             # 3. Connection and frame rendering
             if not is_connected:
-                render_waiting_message()
+                render_waiting_message(overlay_tex_id, local_ip, current_source_name, win_w, win_h)
                 if time.time() >= reconnect_cooldown_until:
                     try:
                         finder.wait_for_sources(0)
@@ -173,6 +184,8 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                             last_frame_data, last_frame_w, last_frame_h, win_w, win_h,
                             texture_id, options.recv_fmt, is_texture_initialized
                         )
+                        if show_banner:
+                            render_ip_banner(overlay_tex_id, local_ip, current_source_name, win_w, win_h)
                     except Exception:
                         is_connected = False
                         receiver = None
@@ -237,7 +250,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
         status_q.put({"type": "error", "error": str(e)})
     finally:
         receiver = None
-        glDeleteTextures(1, [texture_id])
+        glDeleteTextures(2, [texture_id, overlay_tex_id])
         sdl2.SDL_DestroyWindow(window)
         sdl2.SDL_Quit()
         status_q.put({"type": "status", "running": False, "is_connected": False, "current_source": None, "width": 0, "height": 0, "audio_level_l": -60.0, "audio_level_r": -60.0})
