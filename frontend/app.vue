@@ -89,13 +89,36 @@ interface AppSettings {
   }
 }
 
+interface MultiviewStatus {
+  running: boolean
+  fullscreen: boolean
+  slots: Array<{
+    source_name: string
+    is_connected: boolean
+    width: number
+    height: number
+    audio_level_l: number
+    audio_level_r: number
+  }>
+  error: string | null
+}
+
 // Active Tab
-const activeTab = ref<'rx' | 'tx'>('rx')
+const activeTab = ref<'rx' | 'tx' | 'multiview'>('rx')
 
 // State
 const ndiSources = ref<NDISource[]>([])
 const videoDevices = ref<VideoDevice[]>([])
 const audioDevices = ref<AudioDevice[]>([])
+
+const multiviewStatus = ref<MultiviewStatus>({
+  running: false,
+  fullscreen: false,
+  slots: [],
+  error: null
+})
+const multiviewFullscreen = ref(false)
+const multiviewLoading = ref(false)
 
 const appSettings = ref<AppSettings>({
   rx: {
@@ -343,6 +366,42 @@ async function stopTx() {
   }
 }
 
+// Multi-Viewer (SDL2 Window) Actions
+async function startMultiview() {
+  multiviewLoading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/api/multiview/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sources: null, // Auto-discover all sources
+        fullscreen: multiviewFullscreen.value
+      })
+    })
+    if (res.ok) {
+      multiviewStatus.value = await res.json()
+    }
+  } catch (e) {
+    console.error('Failed to start Multiview', e)
+  } finally {
+    multiviewLoading.value = false
+  }
+}
+
+async function stopMultiview() {
+  multiviewLoading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/api/multiview/stop`, { method: 'POST' })
+    if (res.ok) {
+      multiviewStatus.value = await res.json()
+    }
+  } catch (e) {
+    console.error('Failed to stop Multiview', e)
+  } finally {
+    multiviewLoading.value = false
+  }
+}
+
 let hasPopulatedFromSettings = false
 
 async function fetchSettings() {
@@ -461,6 +520,9 @@ function setupSSE() {
           txStatus.value = data.tx
         }
       }
+      if (data.multiview) {
+        multiviewStatus.value = data.multiview
+      }
       if (data.system) {
         systemStatus.value = data.system
       }
@@ -540,6 +602,19 @@ onUnmounted(() => {
             <span
               class="h-2 w-2 rounded-full"
               :class="txStatus.running ? 'bg-red-400 animate-pulse' : 'bg-slate-300 dark:bg-slate-600'"
+            />
+          </button>
+          <button
+            @click="activeTab = 'multiview'"
+            :class="[
+              'px-5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2',
+              activeTab === 'multiview' ? 'bg-[#C7000A] text-white shadow-md shadow-[#C7000A]/20' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+            ]"
+          >
+            <span>Multi-View</span>
+            <span
+              class="h-2 w-2 rounded-full"
+              :class="multiviewStatus.running ? 'bg-purple-400 animate-pulse' : 'bg-slate-300 dark:bg-slate-600'"
             />
           </button>
         </div>
@@ -1072,6 +1147,156 @@ onUnmounted(() => {
             </div>
 
           </div>
+        </div>
+
+      </div>
+
+
+      <!-- ==================== TAB: Multi-View ==================== -->
+      <div v-if="activeTab === 'multiview'" class="space-y-6">
+        
+        <!-- Multi-Viewer Controls Header -->
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-3">
+              <h2 class="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">NDI Multi-Viewer Grid</h2>
+              <span class="text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold px-2.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
+                {{ ndiSources.length }} Sources Active
+              </span>
+            </div>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Live web grid preview with stereo audio level meters and physical SDL2 display output control.
+            </p>
+          </div>
+
+          <!-- SDL2 Multi-Viewer Window Controls -->
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-600 dark:text-slate-300">
+              <input
+                type="checkbox"
+                v-model="multiviewFullscreen"
+                :disabled="multiviewStatus.running"
+                class="rounded bg-white dark:bg-slate-950 border-slate-300 dark:border-slate-700 text-[#C7000A] focus:ring-[#C7000A] h-4 w-4"
+              />
+              <span>Fullscreen</span>
+            </label>
+
+            <button
+              v-if="!multiviewStatus.running"
+              @click="startMultiview"
+              :disabled="multiviewLoading"
+              class="py-2 px-4 bg-[#C7000A] hover:bg-[#b00009] text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-2"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+              </svg>
+              <span>Open Display Window</span>
+            </button>
+            <button
+              v-else
+              @click="stopMultiview"
+              :disabled="multiviewLoading"
+              class="py-2 px-4 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-2"
+            >
+              <span>Close Display Window</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Multi-View Grid (Auto-calculated: 1, 2, 4, 6, 9 cols) -->
+        <div
+          v-if="ndiSources.length > 0"
+          class="grid gap-4"
+          :class="[
+            ndiSources.length === 1 ? 'grid-cols-1 max-w-4xl mx-auto' :
+            ndiSources.length === 2 ? 'grid-cols-1 md:grid-cols-2' :
+            ndiSources.length <= 4 ? 'grid-cols-1 sm:grid-cols-2' :
+            ndiSources.length <= 6 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' :
+            'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4'
+          ]"
+        >
+          <div
+            v-for="source in ndiSources"
+            :key="source.name"
+            class="bg-black border border-slate-800 rounded-2xl overflow-hidden shadow-lg flex flex-col relative group"
+          >
+            <!-- Video Container -->
+            <div class="relative aspect-video w-full bg-slate-950 flex items-center justify-center overflow-hidden">
+              <img
+                :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=5&width=480`"
+                :alt="source.name"
+                class="w-full h-full object-contain pointer-events-none"
+                loading="lazy"
+              />
+
+              <!-- Top Left: NDI Source Label -->
+              <div class="absolute top-2.5 left-2.5 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-2 max-w-[80%]">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="text-xs font-mono font-bold text-white truncate">{{ source.name }}</span>
+              </div>
+
+              <!-- Top Right: Switch RX shortcut button -->
+              <div class="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  @click="rxStatus.running ? switchRx(source.name) : startRx(source.name)"
+                  class="bg-[#C7000A] hover:bg-[#b00009] text-white text-[11px] font-bold px-2.5 py-1 rounded-lg shadow transition"
+                  title="Switch main viewer output to this source"
+                >
+                  {{ rxStatus.running && rxStatus.current_source === source.name ? 'Active RX' : 'Send to RX' }}
+                </button>
+              </div>
+
+              <!-- Bottom: Real-time Audio VU Meter Overlay -->
+              <div class="absolute bottom-2 inset-x-2.5 bg-black/80 backdrop-blur-md px-2.5 py-1.5 rounded-lg border border-white/10 space-y-1">
+                <!-- Channel L -->
+                <div class="flex items-center gap-2">
+                  <span class="text-[9px] font-mono font-semibold text-slate-400 w-2.5">L</span>
+                  <div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
+                    <div
+                      class="h-full transition-all duration-75 ease-out rounded-full"
+                      :class="[
+                        rxStatus.current_source === source.name ? (
+                          (rxStatus.audio_peak_l ?? -60) > -3 ? 'bg-rose-500' :
+                          (rxStatus.audio_peak_l ?? -60) > -12 ? 'bg-amber-400' : 'bg-emerald-500'
+                        ) : 'bg-emerald-500/70'
+                      ]"
+                      :style="{ width: `${rxStatus.current_source === source.name ? Math.max(0, Math.min(100, (((rxStatus.audio_level_l ?? -60) + 60) / 60) * 100)) : 40}%` }"
+                    />
+                  </div>
+                </div>
+
+                <!-- Channel R -->
+                <div class="flex items-center gap-2">
+                  <span class="text-[9px] font-mono font-semibold text-slate-400 w-2.5">R</span>
+                  <div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
+                    <div
+                      class="h-full transition-all duration-75 ease-out rounded-full"
+                      :class="[
+                        rxStatus.current_source === source.name ? (
+                          (rxStatus.audio_peak_r ?? -60) > -3 ? 'bg-rose-500' :
+                          (rxStatus.audio_peak_r ?? -60) > -12 ? 'bg-amber-400' : 'bg-emerald-500'
+                        ) : 'bg-emerald-500/70'
+                      ]"
+                      :style="{ width: `${rxStatus.current_source === source.name ? Math.max(0, Math.min(100, (((rxStatus.audio_level_r ?? -60) + 60) / 60) * 100)) : 40}%` }"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div v-else class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-12 text-center space-y-3">
+          <div class="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto text-slate-400">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <h3 class="text-sm font-bold text-slate-800 dark:text-slate-200">No NDI Sources Detected</h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+            Discovered NDI feeds on your local network will automatically appear here in an auto-arranged grid layout.
+          </p>
         </div>
 
       </div>

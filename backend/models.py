@@ -120,3 +120,24 @@ class AppSettings(BaseModel):
     rx: RxPresetSettings = Field(default_factory=RxPresetSettings)
     tx: TxPresetSettings = Field(default_factory=TxPresetSettings)
 
+
+class MultiviewSlotStatus(BaseModel):
+    source_name: str
+    is_connected: bool = False
+    width: int = 0
+    height: int = 0
+    audio_level_l: float = -60.0
+    audio_level_r: float = -60.0
+
+
+class MultiviewStartRequest(BaseModel):
+    sources: Optional[List[str]] = Field(default=None, description="List of source names, or null for auto-discovery")
+    fullscreen: bool = False
+
+
+class MultiviewStatus(BaseModel):
+    running: bool = False
+    fullscreen: bool = False
+    slots: List[MultiviewSlotStatus] = Field(default_factory=list)
+    error: Optional[str] = None
+

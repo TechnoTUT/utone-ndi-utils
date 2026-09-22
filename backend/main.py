@@ -25,11 +25,14 @@ from backend.models import (
     TxStatus,
     SystemStatus,
     AppSettings,
+    MultiviewStartRequest,
+    MultiviewStatus,
 )
 from backend.ndi_scanner import scanner
 from backend.devices import list_video_devices, list_audio_devices
 from backend.rx_runner import rx_runner
 from backend.tx_runner import tx_runner
+from backend.multiview_runner import multiview_runner
 from backend.preview_manager import preview_manager
 from backend.system_monitor import system_monitor
 from backend.settings import settings_manager
@@ -91,6 +94,7 @@ async def lifespan(app: FastAPI):
     preview_manager.stop_all()
     rx_runner.stop()
     tx_runner.stop()
+    multiview_runner.stop()
 
 
 app = FastAPI(
@@ -156,6 +160,7 @@ async def events_stream(request: Request):
                 "rx": rx_stat,
                 "tx": tx_stat,
                 "system": sys_stat,
+                "multiview": multiview_runner.get_status().model_dump(),
                 "settings": settings_manager.get_settings().model_dump(),
             }
             payload_str = json.dumps(current_payload, sort_keys=True)
@@ -323,6 +328,30 @@ def stop_tx():
     """Stop NDI TX sender."""
     tx_runner.stop()
     return tx_runner.get_status()
+
+
+# --- Multi-Viewer Endpoints ---
+@app.get("/api/multiview/status", response_model=MultiviewStatus, tags=["Multiview"])
+def get_multiview_status():
+    """Get status of SDL2 multi-viewer window."""
+    return multiview_runner.get_status()
+
+
+@app.post("/api/multiview/start", response_model=MultiviewStatus, tags=["Multiview"])
+def start_multiview(req: MultiviewStartRequest):
+    """Start SDL2 multi-viewer grid window with auto-discovery or specific sources."""
+    try:
+        multiview_runner.start(req)
+        return multiview_runner.get_status()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/multiview/stop", response_model=MultiviewStatus, tags=["Multiview"])
+def stop_multiview():
+    """Stop SDL2 multi-viewer window."""
+    multiview_runner.stop()
+    return multiview_runner.get_status()
 
 
 # --- Persistent Settings Endpoints ---

@@ -9,6 +9,7 @@ import uvicorn
 
 from cli.rx_cmd import rx_command
 from cli.tx_cmd import tx_command
+from cli.multiview_cmd import multiview_command
 
 
 @click.group()
@@ -54,6 +55,7 @@ def web_command(host: str, port: int, reload: bool):
 
 cli.add_command(rx_command)
 cli.add_command(tx_command)
+cli.add_command(multiview_command)
 
 
 if __name__ == "__main__":

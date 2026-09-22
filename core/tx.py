@@ -57,29 +57,108 @@ class Options(NamedTuple):
     audio_channels: int
 
 
+def generate_color_bars(width: int, height: int, pix_fmt: PixFmt, text: str = "TEST PATTERN") -> np.ndarray:
+    """Generate SMPTE-style HD color bars pattern with timestamp / label."""
+    # 7 standard colors in BGR: White, Yellow, Cyan, Green, Magenta, Red, Blue
+    colors = [
+        (255, 255, 255),  # White
+        (0, 255, 255),    # Yellow
+        (255, 255, 0),    # Cyan
+        (0, 255, 0),      # Green
+        (255, 0, 255),    # Magenta
+        (0, 0, 255),      # Red
+        (255, 0, 0),      # Blue
+    ]
+    img = np.zeros((height, width, 3), dtype=np.uint8)
+    bar_w = width // len(colors)
+    
+    # Top 75% standard bars
+    h_top = int(height * 0.75)
+    for i, col in enumerate(colors):
+        x_start = i * bar_w
+        x_end = width if i == len(colors) - 1 else (i + 1) * bar_w
+        img[0:h_top, x_start:x_end] = col
+
+    # Bottom 25% cast bars (Blue, Black, Magenta, Black, Cyan, Black, Gray)
+    cast_colors = [
+        (255, 0, 0), (0, 0, 0), (255, 0, 255), (0, 0, 0), (255, 255, 0), (0, 0, 0), (128, 128, 128)
+    ]
+    for i, col in enumerate(cast_colors):
+        x_start = i * bar_w
+        x_end = width if i == len(cast_colors) - 1 else (i + 1) * bar_w
+        img[h_top:height, x_start:x_end] = col
+
+    # Draw label box in center
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = max(0.8, width / 1280.0 * 1.2)
+    thickness = max(2, int(font_scale * 2))
+    text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
+    tx = (width - text_size[0]) // 2
+    ty = int(height * 0.45)
+
+    cv2.rectangle(img, (tx - 20, ty - text_size[1] - 15), (tx + text_size[0] + 20, ty + 15), (0, 0, 0), -1)
+    cv2.putText(img, text, (tx, ty), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+    return cv2.cvtColor(img, pix_fmt.cv_color_code)
+
+
 class VideoSourceThread(threading.Thread):
     def __init__(self, device_index: int, width: int, height: int, fps: float, out_queue: queue.Queue, pix_fmt: PixFmt):
         super().__init__()
+        self.device_index = device_index
         self.out_queue = out_queue
         self.pix_fmt = pix_fmt
+        self.fps = fps if fps > 0 else 30.0
         self.running = True
         self.daemon = True
+        self.cap = None
 
-        self.cap = cv2.VideoCapture(device_index, cv2.CAP_V4L2)
-        if not self.cap.isOpened():
-            raise IOError(f"Could not open video device: {device_index}")
+        if device_index == -1:
+            # Color Bars Test Pattern generator
+            self.actual_xres = width
+            self.actual_yres = height
+            self.actual_fps = self.fps
+        else:
+            self.cap = cv2.VideoCapture(device_index, cv2.CAP_V4L2)
+            if not self.cap.isOpened():
+                raise IOError(f"Could not open video device: {device_index}")
 
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.cap.set(cv2.CAP_PROP_FPS, fps)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
-        
-        self.actual_xres = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.actual_yres = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.cap.set(cv2.CAP_PROP_FPS, fps)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+            
+            self.actual_xres = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.actual_yres = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            self.actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
 
     def run(self):
+        if self.device_index == -1:
+            # Synthetic pattern loop
+            frame_interval = 1.0 / self.actual_fps
+            start_t = time.time()
+            frame_count = 0
+            while self.running:
+                now_str = time.strftime("%H:%M:%S")
+                label = f"NDI TEST PATTERN - {now_str}"
+                processed_frame = generate_color_bars(self.actual_xres, self.actual_yres, self.pix_fmt, label)
+                
+                try:
+                    self.out_queue.put(processed_frame, timeout=QUEUE_TIMEOUT)
+                except queue.Full:
+                    try:
+                        self.out_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+
+                frame_count += 1
+                target_time = start_t + frame_count * frame_interval
+                sleep_dur = target_time - time.time()
+                if sleep_dur > 0:
+                    time.sleep(sleep_dur)
+            return
+
         retry_count = 0
         while self.running:
             ret, frame = self.cap.read()
@@ -108,7 +187,8 @@ class VideoSourceThread(threading.Thread):
     def stop(self):
         self.running = False
         self.join(timeout=2)
-        self.cap.release()
+        if self.cap:
+            self.cap.release()
 
 
 class VideoSendThread(threading.Thread):

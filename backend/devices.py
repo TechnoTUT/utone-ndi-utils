@@ -11,7 +11,13 @@ from backend.models import VideoDeviceItem, AudioDeviceItem
 
 
 def list_video_devices(max_scan: int = 8) -> List[VideoDeviceItem]:
-    devices: List[VideoDeviceItem] = []
+    devices: List[VideoDeviceItem] = [
+        VideoDeviceItem(
+            index=-1,
+            name="Color Bars (Test Pattern)",
+            is_available=True
+        )
+    ]
     
     # 1. First check /dev/video* to find valid candidates
     candidates = []

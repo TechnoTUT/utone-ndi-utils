@@ -17,12 +17,15 @@ from core.tx import PixFmt, Options, capture_and_send, parse_frame_rate
 @click.option('-x', '--x-res', type=int, default=1920, show_default=True, help='Horizontal resolution.')
 @click.option('-y', '--y-res', type=int, default=1080, show_default=True, help='Vertical resolution.')
 @click.option('--fps', type=str, default='30', show_default=True, help='Frame rate (e.g., 30, 29.97, 60000/1001).')
-@click.option('-d', '--video-device', type=int, default=0, show_default=True, help='Video device index.')
+@click.option('-d', '--video-device', type=int, default=0, show_default=True, help='Video device index (-1 for Color Bars test pattern).')
+@click.option('--test-pattern', is_flag=True, help='Shortcut to broadcast SMPTE Color Bars test pattern instead of camera.')
 @click.option('--audio-device', type=int, default=None, show_default=False, help='Audio device ID (ignored if --no-audio).')
 @click.option('--sample-rate', type=int, default=48000, show_default=True, help='Audio sample rate (ignored if --no-audio).')
 @click.option('--audio-channels', type=int, default=2, show_default=True, help='Number of audio channels (ignored if --no-audio).')
 @click.option('-n', '--sender-name', type=str, default='TX', show_default=True, help='NDI name for the sender.')
-def tx_command(list_devices: bool, no_audio: bool, pix_fmt: str, x_res: int, y_res: int, fps: str, video_device: int, audio_device: int, sample_rate: int, audio_channels: int, sender_name: str):
+def tx_command(list_devices: bool, no_audio: bool, pix_fmt: str, x_res: int, y_res: int, fps: str, video_device: int, test_pattern: bool, audio_device: int, sample_rate: int, audio_channels: int, sender_name: str):
+    if test_pattern:
+        video_device = -1
     if list_devices:
         click.echo("--- Available Video Devices (OpenCV) ---")
         for i in range(10):
