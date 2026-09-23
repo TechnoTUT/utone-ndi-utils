@@ -74,6 +74,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     is_connected = False
     reconnect_cooldown_until = 0.0
 
+    connect_timeout_until = 0.0
     last_frame_data = None
     last_frame_w, last_frame_h = 0, 0
     is_texture_initialized = False
@@ -86,7 +87,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
 
     try:
         while running:
-            # 1. Process commands from main API process
+            # 1. Inter-process command handling
             while not command_q.empty():
                 try:
                     cmd = command_q.get_nowait()
@@ -135,38 +136,48 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
             # 3. Connection and frame rendering
             if not is_connected:
                 render_waiting_message(overlay_tex_id, local_ip, current_source_name, win_w, win_h)
-                if time.time() >= reconnect_cooldown_until:
-                    try:
-                        finder.wait_for_sources(0)
-                        matched = None
-                        for s in finder:
-                            if s.name == current_source_name or s.stream_name == current_source_name:
-                                matched = s
-                                break
-                        if matched is not None:
-                            receiver = Receiver(
-                                color_format=options.recv_fmt.value,
-                                bandwidth=options.recv_bandwidth.value,
-                            )
-                            receiver.frame_sync.set_video_frame(vf)
-                            if af is not None:
-                                try:
-                                    receiver.frame_sync.set_audio_frame(af)
-                                except Exception:
-                                    pass
-                            receiver.set_source(matched)
-                            is_connected = True
-                        else:
-                            reconnect_cooldown_until = time.time() + 1.0
-                    except Exception as e:
+                if receiver is None:
+                    if now >= reconnect_cooldown_until:
+                        try:
+                            try:
+                                finder.wait_for_sources(0.01)
+                            except Exception:
+                                pass
+                            matched = None
+                            for s in finder:
+                                if s.name == current_source_name or s.stream_name == current_source_name:
+                                    matched = s
+                                    break
+                            if matched is not None:
+                                receiver = Receiver(
+                                    color_format=options.recv_fmt.value,
+                                    bandwidth=options.recv_bandwidth.value,
+                                )
+                                receiver.frame_sync.set_video_frame(vf)
+                                if af is not None:
+                                    try:
+                                        receiver.frame_sync.set_audio_frame(af)
+                                    except Exception:
+                                        pass
+                                receiver.set_source(matched)
+                                connect_timeout_until = now + 5.0
+                            else:
+                                reconnect_cooldown_until = now + 1.0
+                        except Exception as e:
+                            receiver = None
+                            reconnect_cooldown_until = now + 2.0
+                else:
+                    # Asynchronous connection handshake in progress
+                    if receiver.is_connected():
+                        is_connected = True
+                    elif now >= connect_timeout_until:
                         receiver = None
-                        reconnect_cooldown_until = time.time() + 2.0
-                        is_connected = False
+                        reconnect_cooldown_until = now + 2.0
             else:
                 if not receiver or not receiver.is_connected():
                     is_connected = False
                     receiver = None
-                    reconnect_cooldown_until = time.time() + 2.0
+                    reconnect_cooldown_until = now + 2.0
                     last_frame_data, last_frame_w, last_frame_h = None, 0, 0
                     is_texture_initialized = False
                 else:
@@ -189,7 +200,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                     except Exception:
                         is_connected = False
                         receiver = None
-                        reconnect_cooldown_until = time.time() + 2.0
+                        reconnect_cooldown_until = now + 2.0
                         is_texture_initialized = False
 
                     # Audio capture & dBFS calculation
@@ -197,11 +208,8 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                         try:
                             num_samples = receiver.frame_sync.capture_audio(1024)
                             if num_samples and num_samples > 0:
-                                try:
-                                    mv = memoryview(af)
-                                except TypeError:
-                                    mv = memoryview(bytes(af))
-                                audio_arr = np.frombuffer(mv, dtype=np.float32)
+                                raw_af = bytes(af)
+                                audio_arr = np.frombuffer(raw_af, dtype=np.float32)
                                 num_ch = af.num_channels if hasattr(af, "num_channels") and af.num_channels > 0 else 2
                                 if audio_arr.size >= num_ch:
                                     audio_arr = audio_arr[: num_samples * num_ch].reshape((-1, num_ch))

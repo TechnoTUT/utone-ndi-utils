@@ -46,6 +46,7 @@ class SlotState:
         self.texture_id = glGenTextures(1)
         self.is_connected = False
         self.reconnect_cooldown = 0.0
+        self.connect_timeout = 0.0
         self.frame_data: Optional[bytes] = None
         self.frame_w = 0
         self.frame_h = 0
@@ -278,30 +279,38 @@ def play_multiview(
 
                 # Manage Receiver connection
                 if not slot.is_connected:
-                    if now >= slot.reconnect_cooldown:
-                        try:
-                            matched = None
-                            for s in finder:
-                                if s.name == slot.source_name or s.stream_name == slot.source_name:
-                                    matched = s
-                                    break
-                            if matched is not None:
-                                rec = Receiver(
-                                    color_format=RecvColorFormat.RGBX_RGBA,
-                                    bandwidth=RecvBandwidth.lowest,
-                                )
-                                rec.frame_sync.set_video_frame(slot.vf)
-                                if slot.af is not None:
-                                    try:
-                                        rec.frame_sync.set_audio_frame(slot.af)
-                                    except Exception:
-                                        pass
-                                rec.set_source(matched)
-                                slot.receiver = rec
-                                slot.is_connected = True
-                            else:
-                                slot.reconnect_cooldown = now + 1.5
-                        except Exception:
+                    if slot.receiver is None:
+                        if now >= slot.reconnect_cooldown:
+                            try:
+                                matched = None
+                                for s in finder:
+                                    if s.name == slot.source_name or s.stream_name == slot.source_name:
+                                        matched = s
+                                        break
+                                if matched is not None:
+                                    rec = Receiver(
+                                        color_format=RecvColorFormat.RGBX_RGBA,
+                                        bandwidth=RecvBandwidth.highest,
+                                    )
+                                    rec.frame_sync.set_video_frame(slot.vf)
+                                    if slot.af is not None:
+                                        try:
+                                            rec.frame_sync.set_audio_frame(slot.af)
+                                        except Exception:
+                                            pass
+                                    rec.set_source(matched)
+                                    slot.receiver = rec
+                                    slot.connect_timeout = now + 5.0
+                                else:
+                                    slot.reconnect_cooldown = now + 1.5
+                            except Exception:
+                                slot.receiver = None
+                                slot.reconnect_cooldown = now + 2.0
+                    else:
+                        # Asynchronous connection handshake in progress
+                        if slot.receiver.is_connected():
+                            slot.is_connected = True
+                        elif now >= slot.connect_timeout:
                             slot.receiver = None
                             slot.reconnect_cooldown = now + 2.0
                 else:
@@ -327,11 +336,8 @@ def play_multiview(
                             try:
                                 num_samples = slot.receiver.frame_sync.capture_audio(1024)
                                 if num_samples and num_samples > 0:
-                                    try:
-                                        mv = memoryview(slot.af)
-                                    except TypeError:
-                                        mv = memoryview(bytes(slot.af))
-                                    audio_arr = np.frombuffer(mv, dtype=np.float32)
+                                    raw_af = bytes(slot.af)
+                                    audio_arr = np.frombuffer(raw_af, dtype=np.float32)
                                     num_ch = slot.af.num_channels if hasattr(slot.af, "num_channels") and slot.af.num_channels > 0 else 2
                                     if audio_arr.size >= num_ch:
                                         audio_arr = audio_arr[: num_samples * num_ch].reshape((-1, num_ch))
