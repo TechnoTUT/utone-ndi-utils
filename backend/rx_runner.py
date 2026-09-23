@@ -41,6 +41,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
         finder.open()
     except Exception:
         pass
+
     options = Options(
         sender_name=init_options["sender_name"],
         recv_fmt=RecvFmt.from_str(init_options.get("recv_fmt", "rgb")),
@@ -48,49 +49,53 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
         fullscreen=init_options.get("fullscreen", False),
     )
 
-    try:
-        window = init_window("NDI Viewer", 1280, 720, options.fullscreen)
-    except Exception as e:
-        status_q.put({"type": "error", "error": f"Failed to init SDL window: {e}"})
-        return
-
-    w_ptr, h_ptr = sdl2.c_int(), sdl2.c_int()
-    sdl2.SDL_GetWindowSize(window, w_ptr, h_ptr)
-    win_w, win_h = w_ptr.value, h_ptr.value
-
-    glEnable(GL_TEXTURE_2D)
-    glViewport(0, 0, win_w, win_h)
-    glMatrixMode(GL_PROJECTION)
-    glLoadIdentity()
-    glOrtho(-1, 1, -1, 1, -1, 1)
-    glMatrixMode(GL_MODELVIEW)
-    glLoadIdentity()
-
-    texture_id = glGenTextures(1)
-    overlay_tex_id = glGenTextures(1)
-    receiver: Optional[Receiver] = None
-    vf = VideoFrameSync()
-    af = AudioFrameSync() if AudioFrameSync is not None else None
-
-    current_source_name = options.sender_name
-    running = True
-    event = sdl2.SDL_Event()
-    is_connected = False
-    reconnect_cooldown_until = 0.0
-    connect_timeout_until = 0.0
-    last_connected_time = 0.0
-
-    last_frame_data = None
-    last_frame_w, last_frame_h = 0, 0
-    is_texture_initialized = False
-    last_status_report = 0.0
-    frames_rendered = 0
-    last_audio_levels = [-60.0, -60.0]
-    last_audio_peaks = [-60.0, -60.0]
-    start_time = time.time()
-    local_ip = get_local_ip()
+    window = None
+    texture_id = None
+    overlay_tex_id = None
 
     try:
+        try:
+            window = init_window("NDI Viewer", 1280, 720, options.fullscreen)
+        except Exception as e:
+            status_q.put({"type": "error", "error": f"Failed to init SDL window: {e}"})
+            return
+
+        w_ptr, h_ptr = sdl2.c_int(), sdl2.c_int()
+        sdl2.SDL_GetWindowSize(window, w_ptr, h_ptr)
+        win_w, win_h = w_ptr.value, h_ptr.value
+
+        glEnable(GL_TEXTURE_2D)
+        glViewport(0, 0, win_w, win_h)
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        glOrtho(-1, 1, -1, 1, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+
+        texture_id = glGenTextures(1)
+        overlay_tex_id = glGenTextures(1)
+        receiver: Optional[Receiver] = None
+        vf = VideoFrameSync()
+        af = AudioFrameSync() if AudioFrameSync is not None else None
+
+        current_source_name = options.sender_name
+        running = True
+        event = sdl2.SDL_Event()
+        is_connected = False
+        reconnect_cooldown_until = 0.0
+        connect_timeout_until = 0.0
+        last_connected_time = 0.0
+
+        last_frame_data = None
+        last_frame_w, last_frame_h = 0, 0
+        is_texture_initialized = False
+        last_status_report = 0.0
+        frames_rendered = 0
+        last_audio_levels = [-60.0, -60.0]
+        last_audio_peaks = [-60.0, -60.0]
+        start_time = time.time()
+        local_ip = get_local_ip()
+
         while running:
             # 1. Inter-process command handling
             while not command_q.empty():
@@ -144,11 +149,26 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                 if receiver is None:
                     if now >= reconnect_cooldown_until:
                         try:
+                            # Non-blocking poll for discovery updates
+                            try:
+                                finder.wait_for_sources(0)
+                            except Exception:
+                                pass
+
                             matched = None
-                            for s in finder:
-                                if s.name == current_source_name or s.stream_name == current_source_name:
+                            available = list(finder)
+                            for s in available:
+                                s_name = getattr(s, "name", "")
+                                s_stream = getattr(s, "stream_name", "")
+                                if (
+                                    s_name == current_source_name
+                                    or s_stream == current_source_name
+                                    or current_source_name in s_name
+                                    or (s_stream and s_stream in current_source_name)
+                                ):
                                     matched = s
                                     break
+
                             if matched is not None:
                                 receiver = Receiver(
                                     color_format=options.recv_fmt.value,
@@ -161,15 +181,15 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                                     except Exception:
                                         pass
                                 receiver.set_source(matched)
-                                connect_timeout_until = now + 8.0
+                                connect_timeout_until = now + 10.0
                                 last_connected_time = now
                                 print(f"[RX RUNNER] Found source {matched.name}, initiating connection...", flush=True)
                             else:
-                                reconnect_cooldown_until = now + 1.0
+                                reconnect_cooldown_until = now + 0.5
                         except Exception as e:
                             print(f"[RX RUNNER] Error creating receiver for {current_source_name}: {e}", flush=True)
                             receiver = None
-                            reconnect_cooldown_until = now + 2.0
+                            reconnect_cooldown_until = now + 1.0
                 else:
                     # Asynchronous connection handshake in progress
                     if receiver.is_connected():
@@ -187,7 +207,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                     elif now >= connect_timeout_until:
                         print(f"[RX RUNNER] Connection timeout waiting for {current_source_name}", flush=True)
                         receiver = None
-                        reconnect_cooldown_until = now + 2.0
+                        reconnect_cooldown_until = now + 1.0
             else:
                 if receiver.is_connected():
                     last_connected_time = now
@@ -196,7 +216,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                     print(f"[RX RUNNER] Connection lost to {current_source_name}", flush=True)
                     is_connected = False
                     receiver = None
-                    reconnect_cooldown_until = now + 2.0
+                    reconnect_cooldown_until = now + 1.0
                     last_frame_data, last_frame_w, last_frame_h = None, 0, 0
                     is_texture_initialized = False
 
@@ -282,9 +302,20 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                 finder.close()
             except Exception:
                 pass
-        glDeleteTextures(2, [texture_id, overlay_tex_id])
-        sdl2.SDL_DestroyWindow(window)
-        sdl2.SDL_Quit()
+        if texture_id is not None and overlay_tex_id is not None:
+            try:
+                glDeleteTextures(2, [texture_id, overlay_tex_id])
+            except Exception:
+                pass
+        if window is not None:
+            try:
+                sdl2.SDL_DestroyWindow(window)
+            except Exception:
+                pass
+        try:
+            sdl2.SDL_Quit()
+        except Exception:
+            pass
         status_q.put({"type": "status", "running": False, "is_connected": False, "current_source": None, "width": 0, "height": 0, "audio_level_l": -60.0, "audio_level_r": -60.0})
 
 
@@ -293,6 +324,7 @@ class RxRunner:
         self.process: Optional[mp.Process] = None
         self.command_q: Optional[mp.Queue] = None
         self.status_q: Optional[mp.Queue] = None
+        self._ctx = mp.get_context("spawn")
         self._current_status = RxStatus(
             running=False,
             is_connected=False,
@@ -336,8 +368,8 @@ class RxRunner:
         if self.process and self.process.is_alive():
             raise RuntimeError("RX is already running. Please switch source or stop first.")
 
-        self.command_q = mp.Queue()
-        self.status_q = mp.Queue()
+        self.command_q = self._ctx.Queue()
+        self.status_q = self._ctx.Queue()
         self._current_status = RxStatus(
             running=True,
             is_connected=False,
@@ -357,7 +389,7 @@ class RxRunner:
             "fullscreen": fullscreen
         }
 
-        self.process = mp.Process(
+        self.process = self._ctx.Process(
             target=_rx_worker_process,
             args=(self.command_q, self.status_q, init_opts),
             daemon=True

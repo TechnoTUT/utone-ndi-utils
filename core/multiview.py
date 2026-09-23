@@ -285,7 +285,14 @@ def play_multiview(
                             try:
                                 matched = None
                                 for s in finder:
-                                    if s.name == slot.source_name or s.stream_name == slot.source_name:
+                                    s_name = getattr(s, "name", "")
+                                    s_stream = getattr(s, "stream_name", "")
+                                    if (
+                                        s_name == slot.source_name
+                                        or s_stream == slot.source_name
+                                        or slot.source_name in s_name
+                                        or (s_stream and s_stream in slot.source_name)
+                                    ):
                                         matched = s
                                         break
                                 if matched is not None:

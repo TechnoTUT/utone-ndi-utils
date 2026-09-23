@@ -35,6 +35,7 @@ class MultiviewRunner:
         self.process: Optional[mp.Process] = None
         self.command_q: Optional[mp.Queue] = None
         self.status_q: Optional[mp.Queue] = None
+        self._ctx = mp.get_context("spawn")
         self._status = MultiviewStatus()
 
     def get_status(self) -> MultiviewStatus:
@@ -62,8 +63,8 @@ class MultiviewRunner:
         if self.process and self.process.is_alive():
             raise RuntimeError("Multi-Viewer is already running.")
 
-        self.command_q = mp.Queue()
-        self.status_q = mp.Queue()
+        self.command_q = self._ctx.Queue()
+        self.status_q = self._ctx.Queue()
         self._status = MultiviewStatus(
             running=True,
             fullscreen=req.fullscreen,
@@ -71,7 +72,7 @@ class MultiviewRunner:
             error=None
         )
 
-        self.process = mp.Process(
+        self.process = self._ctx.Process(
             target=_multiview_worker,
             args=(self.command_q, self.status_q, req.model_dump()),
             daemon=True
