@@ -853,7 +853,7 @@ onUnmounted(() => {
                   title="Click to enlarge"
                 >
                   <img
-                    :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=15&width=360`"
+                    :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=5&width=360`"
                     :alt="source.name"
                     class="w-full h-full object-contain pointer-events-none"
                     loading="lazy"
@@ -867,7 +867,7 @@ onUnmounted(() => {
                   </div>
                   <!-- FPS badge -->
                   <span class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-[10px] text-white/80 font-mono">
-                    15fps
+                    5fps
                   </span>
                 </div>
               </div>
@@ -1223,7 +1223,7 @@ onUnmounted(() => {
             <!-- Video Container -->
             <div class="relative aspect-video w-full bg-slate-950 flex items-center justify-center overflow-hidden">
               <img
-                :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=15&width=480`"
+                :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=5&width=480`"
                 :alt="source.name"
                 class="w-full h-full object-contain pointer-events-none"
                 loading="lazy"
@@ -1335,7 +1335,7 @@ onUnmounted(() => {
           <img
             v-if="previewSource"
             :key="previewKey"
-            :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(previewSource)}&fps=30&width=720&t=${previewKey}`"
+            :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(previewSource)}&fps=15&width=640&t=${previewKey}`"
             alt="NDI Preview"
             class="w-full h-full object-contain pointer-events-none"
             @error="console.warn('Preview stream error or connection closed')"

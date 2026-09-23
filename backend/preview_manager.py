@@ -103,7 +103,7 @@ class NDIPreviewSession:
                         if matched is not None:
                             receiver = Receiver(
                                 color_format=RecvColorFormat.BGRX_BGRA,
-                                bandwidth=RecvBandwidth.highest,
+                                bandwidth=RecvBandwidth.lowest,
                             )
                             receiver.frame_sync.set_video_frame(vf)
                             receiver.set_source(matched)
@@ -128,7 +128,7 @@ class NDIPreviewSession:
                     active_targets.append((q, max_w))
 
             if not active_targets:
-                time.sleep(0.002)
+                time.sleep(0.01)
                 continue
 
             # Capture frame
@@ -137,8 +137,6 @@ class NDIPreviewSession:
                 w, h = vf.get_resolution()
                 data_size = vf.get_data_size()
                 if w > 0 and h > 0 and data_size > 0:
-                    # Note: Using bytes(vf) copies the frame and immediately releases the buffer view,
-                    # preventing ValueError('cannot write with view active') on subsequent capture_video() calls.
                     raw_data = bytes(vf)
                     arr = np.frombuffer(raw_data, dtype=np.uint8, count=w * h * 4).reshape((h, w, 4))
 
@@ -151,14 +149,13 @@ class NDIPreviewSession:
                         if w > max_w:
                             new_w = max_w
                             new_h = int(h * (max_w / w))
-                            resized = cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                            resized = cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_AREA)
                         else:
                             resized = arr
 
-                        # In-place color conversion / encoding
-                        bgr = cv2.cvtColor(resized, cv2.COLOR_BGRA2BGR)
+                        # OpenCV imencode can encode BGRA directly to JPEG without manual cvtColor
                         quality = 65 if max_w <= 480 else 75
-                        success, enc = cv2.imencode('.jpg', bgr, [
+                        success, enc = cv2.imencode('.jpg', resized, [
                             int(cv2.IMWRITE_JPEG_QUALITY), quality,
                             int(cv2.IMWRITE_JPEG_OPTIMIZE), 0
                         ])

@@ -90,6 +90,7 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
         last_frame_w, last_frame_h = 0, 0
         is_texture_initialized = False
         last_status_report = 0.0
+        last_audio_calc_time = 0.0
         frames_rendered = 0
         last_audio_levels = [-60.0, -60.0]
         last_audio_peaks = [-60.0, -60.0]
@@ -208,6 +209,9 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                         print(f"[RX RUNNER] Connection timeout waiting for {current_source_name}", flush=True)
                         receiver = None
                         reconnect_cooldown_until = now + 1.0
+
+                # Yield CPU when waiting for source (cap waiting loop at ~60fps)
+                time.sleep(0.016)
             else:
                 if receiver.is_connected():
                     last_connected_time = now
@@ -242,11 +246,12 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                         print(f"[RX RUNNER] Error rendering frame: {e}", flush=True)
                         traceback.print_exc()
 
-                    # Audio capture & dBFS calculation
+                    # Audio capture & dBFS calculation (throttled to ~15fps to reduce NumPy CPU usage)
                     if af is not None:
                         try:
                             num_samples = receiver.frame_sync.capture_audio(1024)
-                            if num_samples and num_samples > 0:
+                            if num_samples and num_samples > 0 and (now - last_audio_calc_time) >= 0.06:
+                                last_audio_calc_time = now
                                 raw_af = bytes(af)
                                 audio_arr = np.frombuffer(raw_af, dtype=np.float32)
                                 num_ch = af.num_channels if hasattr(af, "num_channels") and af.num_channels > 0 else 2
