@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 import threading
+import logging
 import gc
 from typing import Dict, Optional, Set, Tuple
 import numpy as np
@@ -18,6 +19,9 @@ from cyndilib.finder import Finder
 from cyndilib.receiver import Receiver
 from cyndilib.video_frame import VideoFrameSync
 from cyndilib.wrapper.ndi_recv import RecvColorFormat, RecvBandwidth
+from backend.ndi_scanner import scanner
+
+logger = logging.getLogger(__name__)
 
 
 class NDIPreviewSession:
@@ -78,23 +82,35 @@ class NDIPreviewSession:
             if receiver is None or not receiver.is_connected():
                 if now >= reconnect_time:
                     try:
-                        self.finder.wait_for_sources(0)
                         matched = None
-                        for s in self.finder:
-                            if s.name == self.source_name or s.stream_name == self.source_name:
-                                matched = s
+                        # Check shared scanner finder first, then fallback to self.finder
+                        finders = [scanner.finder]
+                        if self.finder not in finders:
+                            finders.append(self.finder)
+
+                        for f in finders:
+                            try:
+                                f.wait_for_sources(0)
+                            except Exception:
+                                pass
+                            for s in f:
+                                if s.name == self.source_name or s.stream_name == self.source_name:
+                                    matched = s
+                                    break
+                            if matched is not None:
                                 break
 
                         if matched is not None:
                             receiver = Receiver(
                                 color_format=RecvColorFormat.BGRX_BGRA,
-                                bandwidth=RecvBandwidth.lowest,
+                                bandwidth=RecvBandwidth.highest,
                             )
                             receiver.frame_sync.set_video_frame(vf)
                             receiver.set_source(matched)
                         else:
                             reconnect_time = now + 1.0
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"Error connecting preview receiver to {self.source_name}: {e}")
                         receiver = None
                         reconnect_time = now + 2.0
                 time.sleep(0.1)
@@ -121,13 +137,10 @@ class NDIPreviewSession:
                 w, h = vf.get_resolution()
                 data_size = vf.get_data_size()
                 if w > 0 and h > 0 and data_size > 0:
-                    try:
-                        mv = memoryview(vf)
-                    except TypeError:
-                        mv = memoryview(bytes(vf))
-
-                    # Reshape buffer directly
-                    arr = np.frombuffer(mv, dtype=np.uint8, count=w * h * 4).reshape((h, w, 4))
+                    # Note: Using bytes(vf) copies the frame and immediately releases the buffer view,
+                    # preventing ValueError('cannot write with view active') on subsequent capture_video() calls.
+                    raw_data = bytes(vf)
+                    arr = np.frombuffer(raw_data, dtype=np.uint8, count=w * h * 4).reshape((h, w, 4))
 
                     # Group subscribers by max_width to encode only once per resolution
                     width_groups: Dict[int, list] = {}
@@ -144,11 +157,10 @@ class NDIPreviewSession:
 
                         # In-place color conversion / encoding
                         bgr = cv2.cvtColor(resized, cv2.COLOR_BGRA2BGR)
-                        # Quality 70 provides fast encode and clear visuals
                         quality = 65 if max_w <= 480 else 75
                         success, enc = cv2.imencode('.jpg', bgr, [
                             int(cv2.IMWRITE_JPEG_QUALITY), quality,
-                            int(cv2.IMWRITE_JPEG_OPTIMIZE), 0  # Fast encode without Huffman pass
+                            int(cv2.IMWRITE_JPEG_OPTIMIZE), 0
                         ])
                         if success:
                             jpeg_bytes = enc.tobytes()
@@ -164,7 +176,8 @@ class NDIPreviewSession:
                                 except Exception:
                                     pass
 
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Error capturing preview frame for {self.source_name}: {e}")
                 receiver = None
                 reconnect_time = now + 2.0
 
@@ -185,7 +198,7 @@ class NDIPreviewSession:
 class NDIPreviewManager:
     """Manages multiple NDI preview sessions by source name."""
     def __init__(self):
-        self.finder = Finder()
+        self.finder = scanner.finder
         self.sessions: Dict[str, NDIPreviewSession] = {}
         self.lock = threading.Lock()
 

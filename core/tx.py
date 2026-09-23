@@ -15,7 +15,10 @@ from typing_extensions import Self
 
 import cv2
 import numpy as np
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
 from cyndilib.sender import Sender
 from cyndilib.video_frame import VideoSendFrame
 from cyndilib.audio_frame import AudioSendFrame

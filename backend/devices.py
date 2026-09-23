@@ -5,7 +5,10 @@ Utilities to scan and list available video and audio devices.
 from __future__ import annotations
 import os
 import cv2
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
 from typing import List
 from backend.models import VideoDeviceItem, AudioDeviceItem
 
@@ -47,6 +50,8 @@ def list_video_devices(max_scan: int = 8) -> List[VideoDeviceItem]:
 
 def list_audio_devices() -> List[AudioDeviceItem]:
     devices: List[AudioDeviceItem] = []
+    if sd is None:
+        return devices
     try:
         all_devs = sd.query_devices()
         for idx, dev in enumerate(all_devs):

@@ -6,7 +6,10 @@ from __future__ import annotations
 import sys
 import click
 import cv2
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
 from core.tx import PixFmt, Options, capture_and_send, parse_frame_rate
 
 
@@ -36,7 +39,10 @@ def tx_command(list_devices: bool, no_audio: bool, pix_fmt: str, x_res: int, y_r
             else:
                 break
         click.echo("\n--- Available Audio Devices (sounddevice) ---")
-        click.echo(sd.query_devices())
+        if sd is not None:
+            click.echo(sd.query_devices())
+        else:
+            click.echo("  sounddevice / PortAudio not available")
         return
 
     try:

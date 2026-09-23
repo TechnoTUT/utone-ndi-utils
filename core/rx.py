@@ -20,15 +20,18 @@ if TYPE_CHECKING:
 import socket
 import sdl2
 import sdl2.ext
-from OpenGL.GL import (
-    GL_TEXTURE_2D, GL_PROJECTION, GL_MODELVIEW, GL_COLOR_BUFFER_BIT,
-    GL_RGBA, GL_BGRA, GL_UNSIGNED_BYTE, GL_QUADS, GL_LINEAR, GL_NEAREST,
-    GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER,
-    glEnable, glViewport, glMatrixMode, glLoadIdentity, glOrtho,
-    glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
-    glTexSubImage2D, glClearColor, glClear, glBegin, glTexCoord2f,
-    glVertex2f, glEnd, glDeleteTextures
-)
+try:
+    from OpenGL.GL import (
+        GL_TEXTURE_2D, GL_PROJECTION, GL_MODELVIEW, GL_COLOR_BUFFER_BIT,
+        GL_RGBA, GL_BGRA, GL_UNSIGNED_BYTE, GL_QUADS, GL_LINEAR, GL_NEAREST,
+        GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER,
+        glEnable, glViewport, glMatrixMode, glLoadIdentity, glOrtho,
+        glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
+        glTexSubImage2D, glClearColor, glClear, glBegin, glTexCoord2f,
+        glVertex2f, glEnd, glDeleteTextures
+    )
+except Exception:
+    pass
 
 
 class RecvFmt(enum.Enum):

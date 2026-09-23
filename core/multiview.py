@@ -11,15 +11,18 @@ import numpy as np
 
 import sdl2
 import sdl2.ext
-from OpenGL.GL import (
-    GL_TEXTURE_2D, GL_PROJECTION, GL_MODELVIEW, GL_COLOR_BUFFER_BIT,
-    GL_RGBA, GL_BGRA, GL_UNSIGNED_BYTE, GL_QUADS, GL_LINES, GL_LINEAR, GL_NEAREST,
-    GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER,
-    glEnable, glDisable, glViewport, glMatrixMode, glLoadIdentity, glOrtho,
-    glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
-    glTexSubImage2D, glClearColor, glClear, glBegin, glTexCoord2f,
-    glVertex2f, glEnd, glColor4f, glDeleteTextures
-)
+try:
+    from OpenGL.GL import (
+        GL_TEXTURE_2D, GL_PROJECTION, GL_MODELVIEW, GL_COLOR_BUFFER_BIT,
+        GL_RGBA, GL_BGRA, GL_UNSIGNED_BYTE, GL_QUADS, GL_LINES, GL_LINEAR, GL_NEAREST,
+        GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER,
+        glEnable, glDisable, glViewport, glMatrixMode, glLoadIdentity, glOrtho,
+        glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
+        glTexSubImage2D, glClearColor, glClear, glBegin, glTexCoord2f,
+        glVertex2f, glEnd, glColor4f, glDeleteTextures
+    )
+except Exception:
+    pass
 
 from cyndilib.receiver import Receiver
 from cyndilib.finder import Finder
