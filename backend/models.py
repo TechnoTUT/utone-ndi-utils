@@ -141,3 +141,15 @@ class MultiviewStatus(BaseModel):
     slots: List[MultiviewSlotStatus] = Field(default_factory=list)
     error: Optional[str] = None
 
+
+class WebRTCOfferRequest(BaseModel):
+    source: str
+    sdp: str
+    type: str
+
+
+class WebRTCAnswerResponse(BaseModel):
+    sdp: str
+    type: str
+
+

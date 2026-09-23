@@ -27,6 +27,8 @@ from backend.models import (
     AppSettings,
     MultiviewStartRequest,
     MultiviewStatus,
+    WebRTCOfferRequest,
+    WebRTCAnswerResponse,
 )
 from backend.ndi_scanner import scanner
 from backend.devices import list_video_devices, list_audio_devices
@@ -34,6 +36,7 @@ from backend.rx_runner import rx_runner
 from backend.tx_runner import tx_runner
 from backend.multiview_runner import multiview_runner
 from backend.preview_manager import preview_manager
+from backend.webrtc_manager import webrtc_manager
 from backend.system_monitor import system_monitor
 from backend.settings import settings_manager
 
@@ -247,6 +250,24 @@ async def get_ndi_preview(
             "X-Accel-Buffering": "no",
         }
     )
+
+
+@app.post("/api/webrtc/offer", response_model=WebRTCAnswerResponse, tags=["WebRTC"])
+async def webrtc_offer(req: WebRTCOfferRequest):
+    """
+    WebRTC signaling endpoint. Receives SDP offer from browser,
+    attaches an NDI video track, and returns the SDP answer.
+    """
+    try:
+        answer = await webrtc_manager.handle_offer(
+            source_name=req.source,
+            sdp=req.sdp,
+            sdp_type=req.type
+        )
+        return answer
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"WebRTC offer failed: {e}")
+
 
 
 # --- Device Discovery Endpoints ---

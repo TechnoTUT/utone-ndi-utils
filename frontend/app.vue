@@ -208,16 +208,73 @@ const txLoading = ref(false)
 const previewSource = ref<string | null>(null)
 const previewKey = ref(0)
 const isPreviewModalOpen = ref(false)
+const previewMode = ref<'webrtc' | 'mjpeg'>('webrtc')
+const webrtcVideoRef = ref<HTMLVideoElement | null>(null)
+let webrtcPc: RTCPeerConnection | null = null
+
+async function initWebRTC(sourceName: string) {
+  try {
+    if (webrtcPc) {
+      webrtcPc.close()
+      webrtcPc = null
+    }
+
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    })
+    webrtcPc = pc
+
+    pc.addTransceiver('video', { direction: 'recvonly' })
+
+    pc.ontrack = (event) => {
+      if (webrtcVideoRef.value && event.streams && event.streams[0]) {
+        webrtcVideoRef.value.srcObject = event.streams[0]
+      }
+    }
+
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+
+    const res = await fetch(`${API_BASE}/api/webrtc/offer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: sourceName,
+        sdp: pc.localDescription?.sdp,
+        type: pc.localDescription?.type
+      })
+    })
+
+    if (!res.ok) {
+      throw new Error(`Signaling failed: ${res.statusText}`)
+    }
+
+    const answer = await res.json()
+    await pc.setRemoteDescription(new RTCSessionDescription(answer))
+    previewMode.value = 'webrtc'
+  } catch (err) {
+    console.warn('WebRTC connection failed, falling back to MJPEG:', err)
+    previewMode.value = 'mjpeg'
+  }
+}
 
 function openPreview(sourceName: string) {
   previewSource.value = sourceName
   previewKey.value = Date.now()
   isPreviewModalOpen.value = true
+  initWebRTC(sourceName)
 }
 
 function closePreview() {
   isPreviewModalOpen.value = false
   previewSource.value = null
+  if (webrtcPc) {
+    webrtcPc.close()
+    webrtcPc = null
+  }
+  if (webrtcVideoRef.value) {
+    webrtcVideoRef.value.srcObject = null
+  }
 }
 
 // API Base
@@ -1314,7 +1371,7 @@ onUnmounted(() => {
           <div class="flex items-center gap-3">
             <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 text-[#C7000A] text-xs font-semibold uppercase tracking-wider">
               <span class="w-2 h-2 rounded-full bg-[#C7000A] animate-pulse"></span>
-              <span>LIVE PREVIEW</span>
+              <span>LIVE PREVIEW ({{ previewMode === 'webrtc' ? 'WebRTC' : 'MJPEG' }})</span>
             </div>
             <h3 class="text-sm font-bold text-slate-900 dark:text-slate-100 truncate max-w-[300px] sm:max-w-md">
               {{ previewSource }}
@@ -1332,8 +1389,18 @@ onUnmounted(() => {
 
         <!-- Video Stream Container -->
         <div class="relative bg-black flex items-center justify-center aspect-video w-full overflow-hidden select-none">
+          <!-- WebRTC Real-time Video Stream -->
+          <video
+            v-show="previewMode === 'webrtc'"
+            ref="webrtcVideoRef"
+            autoplay
+            playsinline
+            muted
+            class="w-full h-full object-contain"
+          ></video>
+          <!-- Fallback MJPEG Image Stream -->
           <img
-            v-if="previewSource"
+            v-if="previewMode === 'mjpeg' && previewSource"
             :key="previewKey"
             :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(previewSource)}&fps=15&width=640&t=${previewKey}`"
             alt="NDI Preview"
@@ -1345,7 +1412,7 @@ onUnmounted(() => {
         <!-- Modal Footer Actions -->
         <div class="px-5 py-3.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
           <p class="text-xs text-slate-500 dark:text-slate-400">
-            MJPEG Stream (Proxy Bandwidth). Closing this modal stops streaming to save resources.
+            {{ previewMode === 'webrtc' ? 'Real-time WebRTC Stream (<100ms ultra-low latency).' : 'MJPEG Fallback Stream.' }} Closing this modal stops streaming to save resources.
           </p>
           <div class="flex items-center gap-2">
             <button
