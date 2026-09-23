@@ -37,6 +37,10 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     import numpy as np
 
     finder = Finder()
+    try:
+        finder.open()
+    except Exception:
+        pass
     options = Options(
         sender_name=init_options["sender_name"],
         recv_fmt=RecvFmt.from_str(init_options.get("recv_fmt", "rgb")),
@@ -73,8 +77,9 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
     event = sdl2.SDL_Event()
     is_connected = False
     reconnect_cooldown_until = 0.0
-
     connect_timeout_until = 0.0
+    last_connected_time = 0.0
+
     last_frame_data = None
     last_frame_w, last_frame_h = 0, 0
     is_texture_initialized = False
@@ -139,10 +144,6 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                 if receiver is None:
                     if now >= reconnect_cooldown_until:
                         try:
-                            try:
-                                finder.wait_for_sources(0.01)
-                            except Exception:
-                                pass
                             matched = None
                             for s in finder:
                                 if s.name == current_source_name or s.stream_name == current_source_name:
@@ -160,27 +161,46 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                                     except Exception:
                                         pass
                                 receiver.set_source(matched)
-                                connect_timeout_until = now + 5.0
+                                connect_timeout_until = now + 8.0
+                                last_connected_time = now
+                                print(f"[RX RUNNER] Found source {matched.name}, initiating connection...", flush=True)
                             else:
                                 reconnect_cooldown_until = now + 1.0
                         except Exception as e:
+                            print(f"[RX RUNNER] Error creating receiver for {current_source_name}: {e}", flush=True)
                             receiver = None
                             reconnect_cooldown_until = now + 2.0
                 else:
                     # Asynchronous connection handshake in progress
                     if receiver.is_connected():
-                        is_connected = True
+                        last_connected_time = now
+                        try:
+                            receiver.frame_sync.capture_video()
+                            tw, th = vf.get_resolution()
+                            if tw > 0 and th > 0 and vf.get_data_size() > 0:
+                                last_frame_data = bytes(vf)
+                                last_frame_w, last_frame_h = tw, th
+                                is_connected = True
+                                print(f"[RX RUNNER] First frame captured ({tw}x{th}). Connected to {current_source_name}!", flush=True)
+                        except Exception as e:
+                            print(f"[RX RUNNER] Capture attempt exception: {e}", flush=True)
                     elif now >= connect_timeout_until:
+                        print(f"[RX RUNNER] Connection timeout waiting for {current_source_name}", flush=True)
                         receiver = None
                         reconnect_cooldown_until = now + 2.0
             else:
-                if not receiver or not receiver.is_connected():
+                if receiver.is_connected():
+                    last_connected_time = now
+                elif now - last_connected_time > 4.0:
+                    # Truly disconnected after 4 seconds of continuous disconnection
+                    print(f"[RX RUNNER] Connection lost to {current_source_name}", flush=True)
                     is_connected = False
                     receiver = None
                     reconnect_cooldown_until = now + 2.0
                     last_frame_data, last_frame_w, last_frame_h = None, 0, 0
                     is_texture_initialized = False
-                else:
+
+                if receiver is not None:
                     try:
                         receiver.frame_sync.capture_video()
                         tex_w, tex_h = vf.get_resolution()
@@ -197,14 +217,13 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
                         )
                         if show_banner:
                             render_ip_banner(overlay_tex_id, local_ip, current_source_name, win_w, win_h)
-                    except Exception:
-                        is_connected = False
-                        receiver = None
-                        reconnect_cooldown_until = now + 2.0
-                        is_texture_initialized = False
+                    except Exception as e:
+                        import traceback
+                        print(f"[RX RUNNER] Error rendering frame: {e}", flush=True)
+                        traceback.print_exc()
 
                     # Audio capture & dBFS calculation
-                    if af is not None and receiver and receiver.is_connected():
+                    if af is not None:
                         try:
                             num_samples = receiver.frame_sync.capture_audio(1024)
                             if num_samples and num_samples > 0:
@@ -258,6 +277,11 @@ def _rx_worker_process(command_q: mp.Queue, status_q: mp.Queue, init_options: di
         status_q.put({"type": "error", "error": str(e)})
     finally:
         receiver = None
+        if hasattr(finder, "close") and getattr(finder, "is_open", False):
+            try:
+                finder.close()
+            except Exception:
+                pass
         glDeleteTextures(2, [texture_id, overlay_tex_id])
         sdl2.SDL_DestroyWindow(window)
         sdl2.SDL_Quit()

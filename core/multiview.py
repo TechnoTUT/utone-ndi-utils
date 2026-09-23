@@ -47,6 +47,7 @@ class SlotState:
         self.is_connected = False
         self.reconnect_cooldown = 0.0
         self.connect_timeout = 0.0
+        self.last_connected_time = 0.0
         self.frame_data: Optional[bytes] = None
         self.frame_w = 0
         self.frame_h = 0
@@ -309,16 +310,28 @@ def play_multiview(
                     else:
                         # Asynchronous connection handshake in progress
                         if slot.receiver.is_connected():
-                            slot.is_connected = True
+                            slot.last_connected_time = now
+                            try:
+                                slot.receiver.frame_sync.capture_video()
+                                tw, th = slot.vf.get_resolution()
+                                if tw > 0 and th > 0 and slot.vf.get_data_size() > 0:
+                                    slot.frame_data = bytes(slot.vf)
+                                    slot.frame_w, slot.frame_h = tw, th
+                                    slot.is_connected = True
+                            except Exception:
+                                pass
                         elif now >= slot.connect_timeout:
                             slot.receiver = None
                             slot.reconnect_cooldown = now + 2.0
                 else:
-                    if not slot.receiver or not slot.receiver.is_connected():
+                    if slot.receiver.is_connected():
+                        slot.last_connected_time = now
+                    elif now - slot.last_connected_time > 4.0:
                         slot.is_connected = False
                         slot.receiver = None
                         slot.reconnect_cooldown = now + 2.0
-                    else:
+
+                    if slot.receiver is not None:
                         # Capture video
                         try:
                             slot.receiver.frame_sync.capture_video()
