@@ -903,28 +903,28 @@ onUnmounted(() => {
                 <h3 class="text-base font-bold text-slate-900 dark:text-slate-100 break-all">{{ source.name }}</h3>
                 <p v-if="source.stream_name" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Stream: {{ source.stream_name }}</p>
 
-                <!-- Live Thumbnail Multi-view (10fps, low res) -->
+                <!-- Live Thumbnail (WebRTC 24fps) -->
                 <div
                   @click="openPreview(source.name)"
-                  class="mt-3 relative aspect-video bg-black/90 rounded-xl overflow-hidden cursor-pointer group border border-slate-200 dark:border-slate-800 flex items-center justify-center select-none"
+                  class="mt-3 relative aspect-video bg-black rounded-xl overflow-hidden cursor-pointer group border border-slate-200 dark:border-slate-800 flex items-center justify-center select-none"
                   title="Click to enlarge"
                 >
-                  <img
-                    :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=5&width=360`"
-                    :alt="source.name"
-                    class="w-full h-full object-contain pointer-events-none"
-                    loading="lazy"
+                  <NdiPreviewPlayer
+                    :source="source.name"
+                    :fps="24"
+                    :width="360"
+                    :api-base="API_BASE"
                   />
                   <!-- Hover overlay indicating click to enlarge -->
-                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-semibold">
+                  <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-semibold z-10">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
                     </svg>
                     <span>Click to Enlarge</span>
                   </div>
                   <!-- FPS badge -->
-                  <span class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-[10px] text-white/80 font-mono">
-                    5fps
+                  <span class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-[10px] text-white/90 font-mono z-10">
+                    24fps WebRTC
                   </span>
                 </div>
               </div>
@@ -1279,11 +1279,11 @@ onUnmounted(() => {
           >
             <!-- Video Container -->
             <div class="relative aspect-video w-full bg-slate-950 flex items-center justify-center overflow-hidden">
-              <img
-                :src="`${API_BASE}/api/ndi/preview?source=${encodeURIComponent(source.name)}&fps=5&width=480`"
-                :alt="source.name"
-                class="w-full h-full object-contain pointer-events-none"
-                loading="lazy"
+              <NdiPreviewPlayer
+                :source="source.name"
+                :fps="24"
+                :width="480"
+                :api-base="API_BASE"
               />
 
               <!-- Top Left: NDI Source Label -->
