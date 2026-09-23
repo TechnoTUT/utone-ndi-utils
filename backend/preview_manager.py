@@ -48,9 +48,10 @@ class NDIPreviewSession:
             self.thread.join(timeout=0.3)
         self.thread = None
 
-    def add_subscriber(self, q: asyncio.Queue, fps: int = 3, max_width: int = 360):
+    def add_subscriber(self, q: asyncio.Queue, fps: int = 3, max_width: int = 360, raw: bool = False):
         with self.lock:
-            self.subscribers[q] = (fps, max_width)
+            # (fps, max_width, raw)
+            self.subscribers[q] = (fps, max_width, raw)
 
     def remove_subscriber(self, q: asyncio.Queue):
         with self.lock:
@@ -119,16 +120,19 @@ class NDIPreviewSession:
             # Check which subscribers need a frame
             active_targets = []
             max_requested_fps = 1
-            for q, (fps, max_w) in subs.items():
+            for q, sub_info in subs.items():
+                fps = sub_info[0]
+                max_w = sub_info[1]
+                is_raw = sub_info[2] if len(sub_info) > 2 else False
                 max_requested_fps = max(max_requested_fps, fps)
                 # Allow a slight leeway (0.85 of interval) so timing jitter doesn't skip frames
                 min_interval = 0.85 / max(1, fps)
                 last_t = last_sub_send_time.get(q, 0.0)
                 if (now - last_t) >= min_interval:
-                    active_targets.append((q, max_w))
+                    active_targets.append((q, max_w, is_raw))
 
             if not active_targets:
-                time.sleep(0.01)
+                time.sleep(0.005)
                 continue
 
             # Capture frame
@@ -140,38 +144,62 @@ class NDIPreviewSession:
                     raw_data = bytes(vf)
                     arr = np.frombuffer(raw_data, dtype=np.uint8, count=w * h * 4).reshape((h, w, 4))
 
-                    # Group subscribers by max_width to encode only once per resolution
-                    width_groups: Dict[int, list] = {}
-                    for q, max_w in active_targets:
-                        width_groups.setdefault(max_w, []).append(q)
+                    # Separate raw subscribers and jpeg subscribers
+                    # Group by max_width
+                    raw_targets = [t for t in active_targets if t[2]]
+                    jpeg_targets = [t for t in active_targets if not t[2]]
 
-                    for max_w, queues in width_groups.items():
+                    # Deliver raw frames
+                    for q, max_w, _ in raw_targets:
                         if w > max_w:
                             new_w = max_w
                             new_h = int(h * (max_w / w))
-                            resized = cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                            target_arr = cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_AREA)
                         else:
-                            resized = arr
-
-                        # OpenCV imencode can encode BGRA directly to JPEG without manual cvtColor
-                        quality = 65 if max_w <= 480 else 75
-                        success, enc = cv2.imencode('.jpg', resized, [
-                            int(cv2.IMWRITE_JPEG_QUALITY), quality,
-                            int(cv2.IMWRITE_JPEG_OPTIMIZE), 0
-                        ])
-                        if success:
-                            jpeg_bytes = enc.tobytes()
-                            for q in queues:
-                                last_sub_send_time[q] = now
+                            target_arr = arr.copy()
+                        last_sub_send_time[q] = now
+                        try:
+                            if q.full():
                                 try:
-                                    if q.full():
-                                        try:
-                                            q.get_nowait()
-                                        except Exception:
-                                            pass
-                                    q.put_nowait(jpeg_bytes)
+                                    q.get_nowait()
                                 except Exception:
                                     pass
+                            q.put_nowait(target_arr)
+                        except Exception:
+                            pass
+
+                    # Deliver JPEG frames
+                    if jpeg_targets:
+                        width_groups: Dict[int, list] = {}
+                        for q, max_w, _ in jpeg_targets:
+                            width_groups.setdefault(max_w, []).append(q)
+
+                        for max_w, queues in width_groups.items():
+                            if w > max_w:
+                                new_w = max_w
+                                new_h = int(h * (max_w / w))
+                                resized = cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                            else:
+                                resized = arr
+
+                            quality = 65 if max_w <= 480 else 75
+                            success, enc = cv2.imencode('.jpg', resized, [
+                                int(cv2.IMWRITE_JPEG_QUALITY), quality,
+                                int(cv2.IMWRITE_JPEG_OPTIMIZE), 0
+                            ])
+                            if success:
+                                jpeg_bytes = enc.tobytes()
+                                for q in queues:
+                                    last_sub_send_time[q] = now
+                                    try:
+                                        if q.full():
+                                            try:
+                                                q.get_nowait()
+                                            except Exception:
+                                                pass
+                                        q.put_nowait(jpeg_bytes)
+                                    except Exception:
+                                        pass
 
             except Exception as e:
                 logger.warning(f"Error capturing preview frame for {self.source_name}: {e}")

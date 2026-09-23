@@ -21,37 +21,31 @@ class NDIWebRTCVideoTrack(VideoStreamTrack):
     """
     aiortc VideoStreamTrack streaming video frames from an NDIPreviewSession.
     """
-    def __init__(self, source_name: str, target_fps: int = 30, target_width: int = 640):
+    def __init__(self, source_name: str, target_fps: int = 24, target_width: int = 640):
         super().__init__()
         self.source_name = source_name
         self.target_fps = target_fps
         self.target_width = target_width
         self.session = preview_manager.get_or_create_session(source_name)
         self.frame_queue: asyncio.Queue = asyncio.Queue(maxsize=2)
-        self.session.add_subscriber(self.frame_queue, fps=target_fps, max_width=target_width)
-        self._pts = 0
+        # Register as raw subscriber to avoid JPEG encode/decode overhead
+        self.session.add_subscriber(self.frame_queue, fps=target_fps, max_width=target_width, raw=True)
+        self._start_time: Optional[float] = None
 
     async def recv(self):
-        try:
-            # Wait up to 1 second for a frame from preview_manager (MJPEG JPEG bytes)
-            jpeg_bytes = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
-            
-            # Decode JPEG into av.VideoFrame
-            packet = av.Packet(jpeg_bytes)
-            codec = av.CodecContext.create('mjpeg', 'r')
-            frames = codec.decode(packet)
-            if frames:
-                frame = frames[0]
-            else:
-                frame = av.VideoFrame(self.target_width, int(self.target_width * 9 / 16), 'yuv420p')
-        except (asyncio.TimeoutError, Exception) as e:
-            # Fallback black frame if no frame received yet
-            frame = av.VideoFrame(self.target_width, int(self.target_width * 9 / 16), 'yuv420p')
+        pts, time_base = await self.next_timestamp()
+        target_height = int(self.target_width * 9 / 16)
 
-        pts = self._pts
-        self._pts += 1
+        try:
+            # Wait up to 1 second for raw NumPy array (h, w, 4) from preview_manager
+            arr = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+            frame = av.VideoFrame.from_ndarray(arr, format='bgra').reformat(format='yuv420p')
+        except (asyncio.TimeoutError, Exception) as e:
+            # Fallback black frame if no frame received
+            frame = av.VideoFrame(self.target_width, target_height, 'yuv420p')
+
         frame.pts = pts
-        frame.time_base = av.time_base
+        frame.time_base = time_base
         return frame
 
     def stop(self):
@@ -68,7 +62,7 @@ class WebRTCManager:
         pc = RTCPeerConnection()
         self.pcs.add(pc)
 
-        video_track = NDIWebRTCVideoTrack(source_name=source_name, target_fps=30, target_width=640)
+        video_track = NDIWebRTCVideoTrack(source_name=source_name, target_fps=24, target_width=640)
         pc.addTrack(video_track)
 
         @pc.on("connectionstatechange")
